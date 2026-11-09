@@ -81,14 +81,17 @@ function GlobalSearch() {
 
 function QuickAdd() {
   const [open, setOpen] = useState(false);
+  // Pages open their form when the URL changes, so each use of the menu needs a fresh URL.
+  const [stamp, setStamp] = useState(0);
+  const toggle = () => { if (!open) setStamp(Date.now()); setOpen(!open); };
   return (
-    <div className="relative shrink-0 ml-auto">
-      <button onClick={() => setOpen(!open)} onBlur={() => setTimeout(() => setOpen(false), 150)} className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-brand px-3.5 font-medium text-white hover:bg-brand-dark">
+    <div className="relative shrink-0 ml-auto" onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false); }}>
+      <button onClick={toggle} className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-brand px-3.5 font-medium text-white hover:bg-brand-dark">
         <Plus className="size-4" /> <span className="hidden sm:inline">Quick add</span>
       </button>
       {open && (
-        <div className="absolute right-0 z-30 mt-1 w-48 bg-white border border-line rounded-lg shadow-lg py-1">
-          {QUICK.map((q) => <Link key={q.href} href={q.href} className="block px-3 py-2 hover:bg-canvas text-ink">{q.label}</Link>)}
+        <div className="absolute right-0 z-30 mt-1 w-48 bg-white border border-line rounded-lg shadow-lg py-1" onMouseDown={(e) => e.preventDefault()}>
+          {QUICK.map((q) => <Link key={q.href} href={`${q.href}&t=${stamp}`} onClick={() => setOpen(false)} className="block px-3 py-2 hover:bg-canvas text-ink">{q.label}</Link>)}
         </div>
       )}
     </div>
