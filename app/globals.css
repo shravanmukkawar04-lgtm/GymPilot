@@ -1,0 +1,56 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+
+@theme {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --color-ink: #131a22;
+  --color-ink-2: #1d2630;
+  --color-body: #2b333b;
+  --color-muted: #626c76;
+  --color-faint: #8b949c;
+  --color-canvas: #f4f5f3;
+  --color-surface: #ffffff;
+  --color-line: #e3e6e2;
+  --color-brand: #0b7a5e;
+  --color-brand-dark: #08614b;
+  --color-brand-soft: #e3f3ed;
+  --color-amber: #a65f00;
+  --color-amber-soft: #fdf1dc;
+  --color-rose: #bb2d3b;
+  --color-rose-soft: #fce9ea;
+  --color-sky: #1b65b5;
+  --color-sky-soft: #e4effa;
+  --color-slate-soft: #eceeec;
+}
+
+html { -webkit-text-size-adjust: 100%; }
+body { background: var(--color-canvas); color: var(--color-body); font-family: var(--font-sans); font-size: 14px; }
+h1, h2, h3 { color: var(--color-ink); letter-spacing: -0.01em; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+
+.input {
+  width: 100%; height: 40px; padding: 0 12px; border: 1px solid var(--color-line); border-radius: 8px;
+  background: #fff; color: var(--color-ink); font-size: 14px;
+}
+textarea.input { height: auto; padding: 10px 12px; }
+.input:focus { outline: 2px solid var(--color-brand); outline-offset: -1px; border-color: transparent; }
+.input::placeholder { color: var(--color-faint); }
+
+.login-slide { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; animation: login-fade 21s infinite; }
+.login-slide:nth-child(2) { animation-delay: 7s; }
+.login-slide:nth-child(3) { animation-delay: 14s; }
+@keyframes login-fade { 0% { opacity: 0; } 5% { opacity: 1; } 33% { opacity: 1; } 38% { opacity: 0; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .login-slide { animation: none; }
+  .login-slide:first-child { opacity: 1; }
+}
+
+@media print {
+  body { background: #fff; }
+  body * { visibility: hidden; }
+  .print-area, .print-area * { visibility: visible; }
+  .print-area { position: absolute; inset: 0 0 auto 0; border: 0 !important; box-shadow: none !important; }
+  .no-print { display: none !important; }
+}
