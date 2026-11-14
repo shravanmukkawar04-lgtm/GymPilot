@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { insert, one, q, update } from '../db';
+import { asTenant, insert, one, q, tx, update } from '../db';
 import { bad, notFound, parse, route } from './router';
 import * as s from './schemas';
 import { AUTO_VARS, channelStatus, countAudience, flushQueue, processCampaign, queueAudience, runAutomations } from '../services/messaging';
@@ -15,7 +15,8 @@ const templateSchema = z.object({
 const AUDIENCES = ['all', 'active', 'expiring', 'expired', 'dues', 'inactive', 'birthdays', 'leads'];
 
 route('GET', '/comms/overview', 'comms', async () => {
-  await runAutomations().catch((e) => console.error('[automations]', e));
+  // A savepoint, so a failure here cannot spoil the rest of the request.
+  await tx(() => runAutomations()).catch((e) => console.error('[automations]', e));
   const [queue, templates, counts, channels] = await Promise.all([
     q(`SELECT * FROM messages WHERE status IN ('queued','failed') ORDER BY id DESC LIMIT 200`),
     q(`SELECT * FROM message_templates ORDER BY id`),
@@ -150,7 +151,7 @@ function webhookUrl(req: Request) {
 }
 
 async function connectionView(req: Request) {
-  const row = (await one<any>('SELECT * FROM whatsapp_settings WHERE id=1'))!;
+  const row = (await one<any>('SELECT * FROM whatsapp_settings'))!;
   return {
     connected: !!row.access_token_enc, phone_number_id: row.phone_number_id, waba_id: row.waba_id,
     display_phone: row.display_phone, verified_name: row.verified_name, quality_rating: row.quality_rating, connected_at: row.connected_at,
@@ -160,13 +161,13 @@ async function connectionView(req: Request) {
 
 route('GET', '/comms/whatsapp', 'comms', async ({ req }) => connectionView(req));
 
-route('PUT', '/comms/whatsapp', 'comms', async ({ body, req }) => {
+route('PUT', '/comms/whatsapp', 'settings', async ({ body, req, user }) => {
   const v = parse(z.object({
     phone_number_id: z.string().trim().regex(/^\d{5,30}$/, 'must contain only numbers'),
     waba_id: z.string().trim().regex(/^\d{5,30}$/, 'must contain only numbers'),
     access_token: s.text, app_secret: s.text,
   }), body);
-  const row = (await one<any>('SELECT * FROM whatsapp_settings WHERE id=1'))!;
+  const row = (await one<any>('SELECT * FROM whatsapp_settings'))!;
   let token = v.access_token;
   if (!token) {
     if (!row.access_token_enc) throw bad('Please fill in: access token');
@@ -174,20 +175,26 @@ route('PUT', '/comms/whatsapp', 'comms', async ({ body, req }) => {
   }
   let info;
   try { info = await verifyConnection(v.phone_number_id, v.waba_id, token); } catch (e: any) { throw bad(`Could not connect. ${e.message}`); }
-  await update('whatsapp_settings', 1, {
+  await update('whatsapp_settings', user.gym_id, {
     phone_number_id: v.phone_number_id, waba_id: v.waba_id, ...info, connected_at: new Date(),
     access_token_enc: encrypt(token), ...(v.app_secret ? { app_secret_enc: encrypt(v.app_secret) } : {}),
   });
   return connectionView(req);
 });
 
-route('DELETE', '/comms/whatsapp', 'comms', async () => {
-  await update('whatsapp_settings', 1, { phone_number_id: null, waba_id: null, access_token_enc: null, app_secret_enc: null, display_phone: null, verified_name: null, quality_rating: null, connected_at: null });
+route('DELETE', '/comms/whatsapp', 'settings', async ({ user }) => {
+  await update('whatsapp_settings', user.gym_id, { phone_number_id: null, waba_id: null, access_token_enc: null, app_secret_enc: null, display_phone: null, verified_name: null, quality_rating: null, connected_at: null });
 });
 
 /** Optional daily trigger. Reminders are also created whenever the owner opens the app. */
 route('GET', '/cron/reminders', 'public', async ({ req }) => {
   const expected = process.env.CRON_SECRET;
   if (!expected || req.headers.get('authorization') !== `Bearer ${expected}`) throw notFound();
-  return runAutomations();
+  // Each gym runs on its own, so one gym's problem does not stop the others' reminders.
+  const gyms = await q<{ id: number }>('SELECT id FROM gyms WHERE active ORDER BY id');
+  const results: Record<number, unknown> = {};
+  for (const g of gyms) {
+    results[g.id] = await asTenant(g.id, null, () => runAutomations()).catch((e) => ({ error: String(e?.message ?? e) }));
+  }
+  return { gyms: gyms.length, results };
 });

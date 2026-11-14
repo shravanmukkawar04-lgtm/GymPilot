@@ -37,7 +37,10 @@ export async function processPunch(db: Db, p: { device_id: number; device_user_i
     [p.device_id, p.device_user_id, p.localTime, p.verify ?? null], db);
   if (!row) return { result: 'duplicate' as const, allowed: true, name: null as string | null }; // devices re-send on reconnect
 
-  const person = await one<Person>('SELECT member_id, staff_id FROM biometric_enrollments WHERE device_user_id=$1', [p.device_user_id], db);
+  // Fingerprint numbers are per branch: the same number can mean different people in two branches.
+  const person = await one<Person>(
+    'SELECT member_id, staff_id FROM biometric_enrollments WHERE device_user_id=$1 AND branch_id=(SELECT branch_id FROM biometric_devices WHERE id=$2)',
+    [p.device_user_id, p.device_id], db);
   if (!person) return { result: 'unknown' as const, allowed: false, name: null };
   const applied = await applyPunch(db, person, row.punched_at, 'biometric');
   await db.query('UPDATE biometric_punches SET result=$2 WHERE id=$1', [row.id, applied.result]);
@@ -59,8 +62,11 @@ export async function manualCheck(db: Db, person: Person) {
 
 /** After an unknown fingerprint number is linked to someone, replay its stored scans. */
 export async function linkEnrollment(db: Db, deviceUserId: string, person: Person) {
-  await db.query('INSERT INTO biometric_enrollments (device_user_id, member_id, staff_id) VALUES ($1,$2,$3)', [deviceUserId, person.member_id, person.staff_id]);
-  const pending = await q<{ id: number; punched_at: Date }>(`SELECT id, punched_at FROM biometric_punches WHERE device_user_id=$1 AND result='unknown' ORDER BY punched_at`, [deviceUserId], db);
+  // The enrollment takes the person's branch, and only that branch's machines' scans are replayed.
+  const e = (await one<{ branch_id: number }>('INSERT INTO biometric_enrollments (device_user_id, member_id, staff_id) VALUES ($1,$2,$3) RETURNING branch_id',
+    [deviceUserId, person.member_id, person.staff_id], db))!;
+  const pending = await q<{ id: number; punched_at: Date }>(
+    `SELECT id, punched_at FROM biometric_punches WHERE device_user_id=$1 AND result='unknown' AND branch_id=$2 ORDER BY punched_at`, [deviceUserId, e.branch_id], db);
   for (const p of pending) {
     const applied = await applyPunch(db, person, new Date(p.punched_at), 'biometric');
     await db.query('UPDATE biometric_punches SET result=$2 WHERE id=$1', [p.id, applied.result]);
@@ -76,11 +82,11 @@ export async function setBiometricId(db: Db, person: Person, deviceUserId: strin
   const current = await one<{ device_user_id: string }>(`SELECT device_user_id FROM biometric_enrollments WHERE ${column}=$1`, [id], db);
   const next = deviceUserId === null ? null : String(deviceUserId).trim();
   if ((current?.device_user_id ?? null) === next) return;
-  if (current) await db.query('DELETE FROM biometric_enrollments WHERE device_user_id=$1', [current.device_user_id]);
+  if (current) await db.query(`DELETE FROM biometric_enrollments WHERE ${column}=$1`, [id]);
   if (next) {
     await linkEnrollment(db, next, person);
-    const who = await one<{ name: string }>(`SELECT name FROM ${person.member_id ? 'members' : 'staff'} WHERE id=$1`, [id], db);
-    await pushUser(db, next, who?.name ?? '');
+    const who = await one<{ name: string; branch_id: number }>(`SELECT name, branch_id FROM ${person.member_id ? 'members' : 'staff'} WHERE id=$1`, [id], db);
+    await pushUser(db, next, who?.name ?? '', undefined, who?.branch_id);
   }
 }
 
@@ -94,14 +100,16 @@ async function queueCommand(db: Db, deviceId: number, command: string, label: st
   await db.query(`INSERT INTO device_commands (device_id, command, label) VALUES ($1,$2,$3)`, [deviceId, command, label]);
 }
 
-async function activeDevices(db: Db, deviceId?: number) {
-  return q<{ id: number }>(`SELECT id FROM biometric_devices WHERE active ${deviceId ? 'AND id=$1' : ''} ORDER BY id`, deviceId ? [deviceId] : [], db);
+/** A branch's machines only. Without a branch (an owner looking at all branches) every machine. */
+async function activeDevices(db: Db, deviceId?: number, branchId?: number | null) {
+  return q<{ id: number }>(`SELECT id FROM biometric_devices WHERE active AND ($1::int IS NULL OR id=$1) AND ($2::int IS NULL OR branch_id=$2) ORDER BY id`,
+    [deviceId ?? null, branchId ?? null], db);
 }
 
 /** Only number and name are sent, so a card or admin setting already on the machine is left alone. */
-export async function pushUser(db: Db, pin: string, name: string, deviceId?: number) {
+export async function pushUser(db: Db, pin: string, name: string, deviceId?: number, branchId?: number | null) {
   const clean = cleanName(name);
-  for (const d of await activeDevices(db, deviceId)) {
+  for (const d of await activeDevices(db, deviceId, branchId)) {
     await queueCommand(db, d.id, `DATA UPDATE USERINFO PIN=${pin}\tName=${clean}`, `Add ${clean} (${pin})`);
   }
 }
@@ -110,28 +118,29 @@ export async function syncAllToDevice(db: Db, deviceId: number) {
   const people = await q<{ pin: string; name: string }>(
     `SELECT e.device_user_id pin, COALESCE(m.name, s.name) AS name FROM biometric_enrollments e
      LEFT JOIN members m ON m.id=e.member_id LEFT JOIN staff s ON s.id=e.staff_id
-     WHERE (m.id IS NOT NULL AND NOT m.archived) OR (s.id IS NOT NULL AND s.active)`, [], db);
+     WHERE e.branch_id = (SELECT branch_id FROM biometric_devices WHERE id=$1)
+       AND ((m.id IS NOT NULL AND NOT m.archived) OR (s.id IS NOT NULL AND s.active))`, [deviceId], db);
   for (const p of people) await pushUser(db, p.pin, p.name, deviceId);
   return people.length;
 }
 
 /** Gives the person a number if needed, adds them to the machine and starts fingerprint capture. */
 export async function startEnrollment(db: Db, person: Person, deviceId?: number) {
-  const devices = await activeDevices(db, deviceId);
-  if (!devices.length) throw bad('Add your fingerprint machine first (Attendance, Machines tab)');
   const column = person.member_id ? 'member_id' : 'staff_id';
   const id = person.member_id ?? person.staff_id;
-  const who = await one<{ name: string }>(`SELECT name FROM ${person.member_id ? 'members' : 'staff'} WHERE id=$1`, [id], db);
+  const who = await one<{ name: string; branch_id: number }>(`SELECT name, branch_id FROM ${person.member_id ? 'members' : 'staff'} WHERE id=$1`, [id], db);
   if (!who) throw bad('Person not found');
+  const devices = await activeDevices(db, deviceId, who.branch_id);
+  if (!devices.length) throw bad('Add this branch\'s fingerprint machine first (Attendance, Machines tab)');
 
   let pin = (await one<{ device_user_id: string }>(`SELECT device_user_id FROM biometric_enrollments WHERE ${column}=$1`, [id], db))?.device_user_id;
   if (!pin) {
-    // Starts above 1000 and above every number seen so far, to avoid clashing with users already on the machine.
+    // Starts above 1000 and above every number seen in this branch, to avoid clashing with users already on the machine.
     const { n } = (await one<{ n: number }>(
       `SELECT GREATEST(1000, COALESCE(max(x.v), 0)) + 1 AS n FROM (
-         SELECT CASE WHEN device_user_id ~ '^\\d{1,9}$' THEN device_user_id::bigint END v FROM biometric_enrollments
-         UNION ALL SELECT CASE WHEN device_user_id ~ '^\\d{1,9}$' THEN device_user_id::bigint END FROM biometric_punches
-       ) x`, [], db))!;
+         SELECT CASE WHEN device_user_id ~ '^\\d{1,9}$' THEN device_user_id::bigint END v FROM biometric_enrollments WHERE branch_id=$1
+         UNION ALL SELECT CASE WHEN device_user_id ~ '^\\d{1,9}$' THEN device_user_id::bigint END FROM biometric_punches WHERE branch_id=$1
+       ) x`, [who.branch_id], db))!;
     pin = String(n);
     await linkEnrollment(db, pin, person);
   }

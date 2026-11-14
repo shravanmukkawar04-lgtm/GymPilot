@@ -1,5 +1,7 @@
+import { timingSafeEqual } from 'node:crypto';
 import { z, ZodError, ZodTypeAny } from 'zod';
 import { NextRequest, NextResponse } from 'next/server';
+import { asTenant } from '../db';
 import { currentUser, SessionUser, can } from './session';
 
 export class ApiError extends Error {
@@ -17,8 +19,13 @@ export type Ctx = {
   setCookie: (value: string) => void;
 };
 type Handler = (c: Ctx) => Promise<unknown>;
-/** 'public' = no login, 'any' = any logged-in user, otherwise a permission key from session.ts */
-type Access = 'public' | 'any' | string;
+/**
+ * 'public' = no login and no gym scope (the handler picks a gym itself if it needs one),
+ * 'super'  = the hidden super admin, checked against SUPERADMIN_KEY,
+ * 'any'    = any logged-in user, otherwise a permission key from session.ts.
+ * Every logged-in route runs inside its gym and branch; see asTenant in lib/db.ts.
+ */
+type Access = 'public' | 'super' | 'any' | string;
 type Route = { method: string; parts: string[]; access: Access; handler: Handler };
 
 const routes: Route[] = [];
@@ -56,6 +63,24 @@ function sameOrigin(req: NextRequest) {
   try { return new URL(origin).host === host; } catch { return false; }
 }
 
+/* ---------- Super admin key ---------- */
+
+const superFails = new Map<string, { count: number; until: number }>();
+
+function superAllowed(req: NextRequest) {
+  const expected = process.env.SUPERADMIN_KEY ?? '';
+  const ip = (req.headers.get('x-forwarded-for') || 'local').split(',')[0].trim();
+  const f = superFails.get(ip);
+  if (f && f.until > Date.now() && f.count >= 10) return false;
+  const given = req.headers.get('x-super-key') ?? '';
+  const ok = expected.length >= 24 && given.length === expected.length && timingSafeEqual(Buffer.from(given), Buffer.from(expected));
+  if (!ok) {
+    if (!f || f.until < Date.now()) superFails.set(ip, { count: 1, until: Date.now() + 15 * 60_000 });
+    else f.count++;
+  }
+  return ok;
+}
+
 export async function dispatch(req: NextRequest, path: string[]) {
   const method = req.method;
   let params: Record<string, string> | null = null;
@@ -68,19 +93,26 @@ export async function dispatch(req: NextRequest, path: string[]) {
   let cookie: string | null = null;
   try {
     if (method !== 'GET' && !sameOrigin(req)) throw new ApiError(403, 'Request blocked');
-    const user = await currentUser(req);
-    if (r.access !== 'public') {
+    // A wrong key looks exactly like a page that does not exist.
+    if (r.access === 'super' && !superAllowed(req)) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    const user = r.access === 'super' ? null : await currentUser(req);
+    const scoped = r.access !== 'public' && r.access !== 'super';
+    if (scoped) {
       if (!user) throw new ApiError(401, 'Please log in');
+      if (!user.gym_active) throw new ApiError(403, 'This gym account is paused. Please contact GymPilot support.');
       if (r.access !== 'any' && !can(user.role, r.access)) throw new ApiError(403, 'You do not have access to this section');
+      if (user.branch_id === -1) throw new ApiError(403, 'Your login is not linked to an active branch. Ask the gym owner to check it.');
     }
     let body: any = undefined;
     if (method !== 'GET' && (req.headers.get('content-type') || '').includes('application/json')) {
       body = blankToNull(await req.json().catch(() => ({})));
     }
-    const data = await r.handler({
-      user: user as SessionUser, params, query: req.nextUrl.searchParams, body: body ?? {}, req,
+    const run = () => r.handler({
+      user: user as SessionUser, params: params!, query: req.nextUrl.searchParams, body: body ?? {}, req,
       setCookie: (v) => { cookie = v; },
     });
+    const data = scoped ? await asTenant(user!.gym_id, user!.branch_id, run) : await run();
+    if (data instanceof Response) return data;
     const res = NextResponse.json(data ?? { ok: true });
     if (cookie) res.headers.append('Set-Cookie', cookie);
     return res;
@@ -92,8 +124,10 @@ export async function dispatch(req: NextRequest, path: string[]) {
       const msg = i.message === 'Required' || i.code === 'invalid_type' ? `Please fill in: ${field}` : `${field}: ${i.message}`;
       return NextResponse.json({ error: msg }, { status: 400 });
     }
+    if (e?.code === 'P0001') return NextResponse.json({ error: e.message }, { status: 400 }); // raised by the database with a readable message
     if (e?.code === '23505') return NextResponse.json({ error: 'That value is already in use. Please use a different one.' }, { status: 409 });
     if (e?.code === '23503') return NextResponse.json({ error: 'This record is linked to other records and cannot be changed that way.' }, { status: 409 });
+    if (e?.code === '42501') return NextResponse.json({ error: 'That record belongs to another branch or gym.' }, { status: 403 });
     console.error(`[api] ${method} /${path.join('/')}`, e);
     return NextResponse.json({ error: 'Something went wrong. Please try again.' }, { status: 500 });
   }

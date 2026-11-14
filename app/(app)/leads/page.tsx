@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Megaphone, MessageCircle, Pencil, Phone, Plus, UserPlus } from 'lucide-react';
 import { api, billTotal, daysFromToday, fmtDate, fmtDateTime, toast, useApi, waLink } from '@/lib/client';
 import { Badge, Button, Card, Empty, ErrorNote, Field, FormModal, Loading, Modal, PageHeader, paymentFields, Stat, toPayment } from '@/components/ui';
-import { BillSummary, planLabel, syncPay } from '@/components/sales';
+import { BillSummary, planLabel, slotField, syncPay } from '@/components/sales';
 
 const STAGES = [
   { key: 'new', label: 'New' }, { key: 'contacted', label: 'Contacted' }, { key: 'trial', label: 'On trial' }, { key: 'follow_up', label: 'Thinking it over' },
@@ -23,11 +23,13 @@ function followLabel(d?: string | null) {
 
 function Convert({ lead, onClose, onDone }: { lead: any; onClose: () => void; onDone: (id: number) => void }) {
   const plans = useApi<any[]>('/plans');
+  const slots = useApi<any[]>('/slots');
   const settings = useApi('/settings');
-  if (!plans.data || !settings.data) return null;
+  if (!plans.data || !slots.data || !settings.data) return null;
   const price = (v: any) => plans.data!.find((p) => String(p.id) === String(v.plan_id))?.price ?? 0;
   const fields: Field[] = [
     { name: 'plan_id', label: 'Membership plan', type: 'select', full: true, options: plans.data.filter((p) => p.active).map((p) => ({ value: p.id, label: planLabel(p) })), help: 'Leave blank to add them as a member without a plan.' },
+    slotField(plans.data, slots.data),
     { name: 'discount', label: 'Discount (₹)', type: 'number', min: 0, show: (v) => !!v.plan_id },
     { name: 'start_date', label: 'Start date', type: 'date', show: (v) => !!v.plan_id },
     ...paymentFields.map((f) => ({ ...f, show: (v: any) => !!v.plan_id && (!f.show || f.show(v)) })),
@@ -35,7 +37,7 @@ function Convert({ lead, onClose, onDone }: { lead: any; onClose: () => void; on
   return <FormModal title={`${lead.name} is joining`} subtitle="Creates their member profile and bill." fields={fields} initial={{ pay_method: 'cash' }} submitLabel="Make member" onClose={onClose}
     onChangeValues={syncPay(settings.data, price)}
     summary={(v) => v.plan_id ? <BillSummary settings={settings.data} gross={price(v)} discount={Number(v.discount) || 0} pay={Number(v.pay_amount) || 0} /> : null}
-    onSubmit={async (v) => { const r = await api(`/leads/${lead.id}/convert`, { body: { plan_id: v.plan_id, start_date: v.start_date, discount: Number(v.discount) || 0, payment: toPayment(v) } }); toast(`${lead.name} is now a member`); onDone(r.member.id); }} />;
+    onSubmit={async (v) => { const r = await api(`/leads/${lead.id}/convert`, { body: { plan_id: v.plan_id, slot_id: v.slot_id || null, start_date: v.start_date, discount: Number(v.discount) || 0, payment: toPayment(v) } }); toast(`${lead.name} is now a member`); onDone(r.member.id); }} />;
 }
 
 function Detail({ id, staff, fields, onClose, onChange }: { id: number; staff: any[]; fields: Field[]; onClose: () => void; onChange: () => void }) {

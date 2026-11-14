@@ -66,7 +66,7 @@ route('POST', '/leads/:id/activities', 'leads', async ({ params, body, user }) =
 });
 
 route('POST', '/leads/:id/convert', 'leads', async ({ params, body, user }) => {
-  const v = parse(z.object({ plan_id: s.idOpt, start_date: s.date, discount: s.moneyOpt, payment: s.payment }), body);
+  const v = parse(z.object({ plan_id: s.idOpt, slot_id: s.idOpt, start_date: s.date, discount: s.moneyOpt, payment: s.payment }), body);
   return tx(async (db) => {
     const l = await one<any>('SELECT * FROM leads WHERE id=$1 FOR UPDATE', [params.id], db);
     if (!l) throw notFound('Enquiry not found');
@@ -74,7 +74,7 @@ route('POST', '/leads/:id/convert', 'leads', async ({ params, body, user }) => {
     const m = await insert('members', { name: l.name, phone: l.phone, email: l.email, gender: l.gender, goal: l.interest, lead_id: l.id }, db);
     await db.query(`UPDATE leads SET status='won', converted_member_id=$2, next_followup=NULL, updated_at=now() WHERE id=$1`, [l.id, m.id]);
     await db.query(`INSERT INTO lead_activities (lead_id, type, note, created_by) VALUES ($1,'status','Joined as a member',$2)`, [l.id, user.id]);
-    const sale = v.plan_id ? await sellMembership(db, { member_id: m.id, plan_id: v.plan_id, start_date: v.start_date, discount: v.discount ?? 0, payment: v.payment, user_id: user.id }) : null;
+    const sale = v.plan_id ? await sellMembership(db, { member_id: m.id, plan_id: v.plan_id, slot_id: v.slot_id, start_date: v.start_date, discount: v.discount ?? 0, payment: v.payment, user_id: user.id }) : null;
     return { member: m, invoice: sale?.invoice ?? null };
   });
 });

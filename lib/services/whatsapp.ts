@@ -25,13 +25,15 @@ export function decrypt(stored: string) {
 
 export type WaConfig = { token: string; phone_id: string; waba_id: string | null };
 
+/**
+ * The current gym's WhatsApp Business connection. Each gym connects its own number on the
+ * WhatsApp setup tab; there is deliberately no site-wide .env fallback, which would make
+ * every gym send from the same number.
+ */
 export async function waConfig(): Promise<WaConfig | null> {
-  const row = await one<any>('SELECT * FROM whatsapp_settings WHERE id=1');
+  const row = await one<any>('SELECT * FROM whatsapp_settings');
   if (row?.access_token_enc && row.phone_number_id) {
     return { token: decrypt(row.access_token_enc), phone_id: row.phone_number_id, waba_id: row.waba_id };
-  }
-  if (process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_ID) {
-    return { token: process.env.WHATSAPP_TOKEN, phone_id: process.env.WHATSAPP_PHONE_ID, waba_id: process.env.WHATSAPP_WABA_ID || null };
   }
   return null;
 }

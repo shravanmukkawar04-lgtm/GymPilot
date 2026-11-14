@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { ArrowLeft, Ban, IndianRupee, MessageCircle, Printer, X } from 'lucide-react';
 import { api, fmtDate, inr, toast, todayIST, useApi, waLink } from '@/lib/client';
-import { Button, Card, Confirm, ErrorNote, FormModal, Loading, METHODS, StatusBadge } from '@/components/ui';
+import { Button, Card, Confirm, ErrorNote, FormModal, Loading, METHODS, paymentFields, StatusBadge, syncMixed, toPayment } from '@/components/ui';
 
 const ONES = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
 const TENS = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
@@ -132,14 +132,16 @@ export default function InvoicePage() {
         </Card>
       )}
 
-      {collect && <FormModal title="Collect payment" subtitle={`Balance due: ${inr(inv.balance)}`} initial={{ amount: inv.balance, method: 'cash', paid_on: todayIST() }} submitLabel="Save payment" onClose={() => setCollect(false)}
-        fields={[
-          { name: 'amount', label: 'Amount (₹)', type: 'number', min: 0, required: true },
-          { name: 'method', label: 'Paid by', type: 'select', required: true, options: METHODS },
-          { name: 'paid_on', label: 'Date', type: 'date' },
-          { name: 'reference', label: 'UPI / card reference' },
-        ]}
-        onSubmit={async (v) => { await api(`/invoices/${id}/payments`, { body: v }); toast('Payment saved'); reload(); }} />}
+      {collect && <FormModal title="Collect payment" subtitle={`Balance due: ${inr(inv.balance)}`} initial={{ pay_amount: inv.balance, pay_method: 'cash', paid_on: todayIST() }} submitLabel="Save payment" onClose={() => setCollect(false)}
+        fields={[...paymentFields.map((f) => (f.name === 'pay_amount' ? { ...f, label: 'Amount received (₹)', required: true, help: undefined } : f)), { name: 'paid_on', label: 'Date', type: 'date' }]}
+        onChangeValues={syncMixed}
+        onSubmit={async (v) => {
+          const p = toPayment(v);
+          if (!p) throw new Error('Enter the amount received');
+          const list = (Array.isArray(p) ? p : [p]).map((x) => ({ ...x, paid_on: v.paid_on }));
+          await api(`/invoices/${id}/payments`, { body: { payments: list } });
+          toast('Payment saved'); reload();
+        }} />}
       {cancel && <FormModal title="Cancel this bill?" subtitle="Any membership, PT package or stock on this bill is reversed." submitLabel="Cancel bill" onClose={() => setCancel(false)}
         fields={[{ name: 'reason', label: 'Reason', required: true, full: true }]}
         onSubmit={async (v) => { await api(`/invoices/${id}/cancel`, { body: v }); toast('Bill cancelled'); reload(); }} />}

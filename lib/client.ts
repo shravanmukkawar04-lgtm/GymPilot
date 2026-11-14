@@ -77,3 +77,54 @@ export function billTotal(s: any, gross: number, discount: number, rate?: number
 export function toast(message: string, kind: 'ok' | 'error' = 'ok') {
   window.dispatchEvent(new CustomEvent('gp-toast', { detail: { message, kind } }));
 }
+
+/** URL of a stored photo. v changes whenever the photo does, so browsers never show an old one. */
+export const photoUrl = (kind: 'member' | 'user' | 'gym', id: number | string, v?: number | string | null) =>
+  v ? `/api/photos/${kind}/${id}?v=${v}` : null;
+
+/** Shrinks a photo in the browser (largest side 480px, JPEG) so it uploads fast and stores small. */
+export async function resizeImage(file: File, max = 480): Promise<string> {
+  if (!file.type.startsWith('image/')) throw new Error('Please choose a photo');
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error('This photo could not be opened. Try a JPG or PNG.'));
+      i.src = url;
+    });
+    const scale = Math.min(1, max / Math.max(img.width, img.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(img.width * scale);
+    canvas.height = Math.round(img.height * scale);
+    canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', 0.82);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/** Reads a CSV file (as saved by Excel or Google Sheets) into rows of text. */
+export function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [], cell = '', quoted = false;
+  const src = text.replace(/^﻿/, '');
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (quoted) {
+      if (ch === '"' && src[i + 1] === '"') { cell += '"'; i++; }
+      else if (ch === '"') quoted = false;
+      else cell += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ',') { row.push(cell); cell = ''; }
+    else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && src[i + 1] === '\n') i++;
+      row.push(cell); cell = '';
+      if (row.some((c) => c.trim())) rows.push(row);
+      row = [];
+    } else cell += ch;
+  }
+  row.push(cell);
+  if (row.some((c) => c.trim())) rows.push(row);
+  return rows;
+}

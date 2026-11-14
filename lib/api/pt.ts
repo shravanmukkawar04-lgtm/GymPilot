@@ -42,6 +42,7 @@ route('POST', '/pt/subscriptions', 'pt_manage', async ({ body, user }) => {
     const pkg = await one<any>('SELECT * FROM pt_packages WHERE id=$1', [v.package_id], db);
     const trainer = await one<any>('SELECT * FROM staff WHERE id=$1 AND is_trainer AND active', [v.trainer_id], db);
     if (!member || !pkg || !trainer) throw notFound('Member, package or trainer not found');
+    if (pkg.branch_id !== member.branch_id || trainer.branch_id !== member.branch_id) throw bad('The member, trainer and package must all be in the same branch');
     const sub = (await one<any>(
       `INSERT INTO pt_subscriptions (member_id, trainer_id, package_id, package_name, total_sessions, start_date, end_date, price, commission_pct)
        VALUES ($1,$2,$3,$4,$5,COALESCE($6::date,gym_today()),COALESCE($6::date,gym_today()) + $7::int - 1,$8,$9) RETURNING *`,

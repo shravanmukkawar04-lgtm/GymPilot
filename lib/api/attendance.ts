@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { insert, one, pool, q, tx, update } from '../db';
+import { asTenant, insert, one, q, tx, update } from '../db';
 import { ApiError, bad, parse, route } from './router';
 import * as s from './schemas';
 import { linkEnrollment, manualCheck, processPunch, startEnrollment, syncAllToDevice } from '../services/attendance';
@@ -98,10 +98,12 @@ route('GET', '/attendance/people', 'attendance', async ({ query }) => {
  */
 route('POST', '/biometric/punch', 'public', async ({ req, body }) => {
   const key = req.headers.get('x-device-key');
-  const device = key ? await one<any>('SELECT * FROM biometric_devices WHERE api_key=$1 AND active', [key]) : null;
+  // The key identifies the machine, and the machine identifies its gym and branch.
+  const device = key ? await one<any>(
+    `UPDATE biometric_devices d SET last_seen_at=now() FROM gyms g WHERE d.api_key=$1 AND d.active AND g.id=d.gym_id AND g.active RETURNING d.*`, [key]) : null;
   if (!device) throw new ApiError(401, 'Unknown device key');
   const v = parse(z.object({ user_id: z.union([z.string().trim().min(1), z.number().transform(String)]), time: z.string().regex(/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}$/, 'must be YYYY-MM-DD HH:MM:SS').nullish(), verify: s.text }), body);
   const localTime = v.time ?? (await one<{ t: string }>(`SELECT to_char(now() AT TIME ZONE 'Asia/Kolkata','YYYY-MM-DD HH24:MI:SS') t`))!.t;
-  await pool().query('UPDATE biometric_devices SET last_seen_at=now() WHERE id=$1', [device.id]);
-  return tx((db) => processPunch(db, { device_id: device.id, device_user_id: v.user_id, localTime: localTime.replace('T', ' '), verify: v.verify }));
+  return asTenant(device.gym_id, device.branch_id, () =>
+    tx((db) => processPunch(db, { device_id: device.id, device_user_id: v.user_id, localTime: localTime.replace('T', ' '), verify: v.verify })));
 });

@@ -1,11 +1,12 @@
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
-import { one, q, update } from '../db';
-import { ApiError, bad, parse, route } from './router';
+import { one, q, tx, update } from '../db';
+import { ApiError, bad, notFound, parse, route } from './router';
 import * as s from './schemas';
-import { can, clearCookie, PERMISSIONS, sessionCookie } from './session';
+import { branchCookie, can, clearCookie, PERMISSIONS, sessionCookie } from './session';
 import { runAutomations } from '../services/messaging';
 import { getSettings } from '../services/billing';
+import { photoResponse, PhotoKind, savePhoto } from '../services/photos';
 
 /* ---------- Login ---------- */
 
@@ -22,35 +23,57 @@ function recordFail(key: string) {
   else a.count++;
 }
 
-const publicUser = (u: any) => (u ? { ...u, permissions: PERMISSIONS[u.role] ?? [] } : null);
-
+/**
+ * Who is logged in, which gym and branch they are working in, and what they can open.
+ * Gym accounts are created only by the super admin, so there is no public sign-up.
+ */
 route('GET', '/auth/state', 'public', async ({ user }) => {
-  const { c } = (await one<{ c: number }>(`SELECT count(*) c FROM users WHERE role='owner'`))!;
-  const { gym_name } = await getSettings();
-  return { needsSetup: c === 0, user: publicUser(user), gym_name };
+  if (!user) return { user: null };
+  const [gym, branches, photos] = await Promise.all([
+    one<any>('SELECT gym_name FROM settings WHERE gym_id=$1', [user.gym_id]),
+    q<any>(`SELECT id, name FROM branches WHERE gym_id=$1 AND active AND ($2::int IS NULL OR id=$2) ORDER BY id`, [user.gym_id, user.home_branch_id]),
+    q<any>(`SELECT kind, extract(epoch FROM updated_at)::bigint v FROM photos WHERE gym_id=$1 AND ((kind='gym' AND ref_id=$1) OR (kind='user' AND ref_id=$2))`, [user.gym_id, user.id]),
+  ]);
+  const v = (kind: string) => photos.find((p) => p.kind === kind)?.v ?? null;
+  return {
+    user: { id: user.id, name: user.name, email: user.email, role: user.role, staff_id: user.staff_id, permissions: PERMISSIONS[user.role] ?? [], photo_v: v('user') },
+    gym_id: user.gym_id, gym_name: gym?.gym_name ?? 'My Gym', gym_photo_v: v('gym'), gym_active: user.gym_active,
+    branches, branch_id: user.branch_id, can_switch_branch: user.role === 'owner' && branches.length > 1,
+  };
 });
 
-route('POST', '/auth/setup', 'public', async ({ body, req, setCookie }) => {
-  const v = parse(z.object({ gym_name: s.reqText, name: s.reqText, email: z.string().trim().toLowerCase().email('is not a valid email'), password: z.string().min(8, 'must be at least 8 characters') }), body);
-  // The WHERE NOT EXISTS makes this safe if two people submit at once.
-  const hash = await bcrypt.hash(v.password, 10);
-  const u = await one<any>(`INSERT INTO users (name, email, password_hash, role) SELECT $1,$2,$3,'owner' WHERE NOT EXISTS (SELECT 1 FROM users WHERE role='owner') RETURNING id`, [v.name, v.email, hash]);
-  if (!u) throw new ApiError(403, 'Setup is already complete. Please log in.');
-  await q('UPDATE settings SET gym_name=$1 WHERE id=1', [v.gym_name]);
-  setCookie(await sessionCookie(u.id, req));
+/** Owners choose which branch to work in, or 'all' to see every branch together. */
+route('POST', '/auth/branch', 'any', async ({ body, user, req, setCookie }) => {
+  if (user.role !== 'owner') throw new ApiError(403, 'Only the owner can switch branches');
+  const v = parse(z.object({ branch_id: z.union([z.literal('all'), s.id]) }), body);
+  if (v.branch_id !== 'all' && !user.branch_ids.includes(v.branch_id)) throw bad('Branch not found');
+  setCookie(branchCookie(v.branch_id, req));
 });
 
 route('POST', '/auth/login', 'public', async ({ body, req, setCookie }) => {
   const v = parse(z.object({ email: z.string().trim().toLowerCase(), password: z.string() }), body);
   const key = v.email;
   checkLimit(key);
-  const u = await one<any>('SELECT * FROM users WHERE email=$1 AND active', [v.email]);
+  const u = await one<any>('SELECT u.*, g.active gym_active FROM users u JOIN gyms g ON g.id=u.gym_id WHERE u.email=$1 AND u.active', [v.email]);
   if (!u || !(await bcrypt.compare(v.password, u.password_hash))) {
     recordFail(key);
     throw new ApiError(401, 'Wrong email or password');
   }
   attempts.delete(key);
+  if (!u.gym_active) throw new ApiError(403, 'This gym account is paused. Please contact GymPilot support.');
   setCookie(await sessionCookie(u.id, req));
+});
+
+route('POST', '/auth/photo', 'any', async ({ body, user }) => {
+  const v = parse(z.object({ photo: s.photo }), body);
+  await savePhoto(undefined, 'user', user.id, v.photo ?? null);
+});
+
+/** Photos are served as images. kind is member, user or gym. */
+route('GET', '/photos/:kind/:id', 'any', async ({ params }) => {
+  const kind = params.kind as PhotoKind;
+  if (!['member', 'user', 'gym'].includes(kind)) throw notFound();
+  return photoResponse(kind, Number(params.id));
 });
 
 route('POST', '/auth/logout', 'public', async ({ setCookie }) => { setCookie(clearCookie()); });
@@ -66,7 +89,8 @@ route('POST', '/auth/password', 'any', async ({ body, user }) => {
 
 route('GET', '/dashboard', 'dashboard', async ({ user }) => {
   if (!can(user.role, 'billing')) return trainerDashboard(user.staff_id ?? -1);
-  await runAutomations().catch((e) => console.error('[automations]', e));
+  // A savepoint, so a failure here cannot spoil the rest of the request.
+  await tx(() => runAutomations()).catch((e) => console.error('[automations]', e));
 
   const [kpis, chart, recent, setup] = await Promise.all([
     one(`SELECT
@@ -85,7 +109,7 @@ route('GET', '/dashboard', 'dashboard', async ({ user }) => {
       (SELECT count(*) FROM messages WHERE status='queued') messages_queued,
       (SELECT count(DISTINCT device_user_id) FROM biometric_punches WHERE result='unknown') unmatched,
       (SELECT count(*) FROM attendance WHERE day=gym_today() AND NOT membership_ok) flagged_today,
-      (SELECT count(*) FROM member_overview WHERE NOT archived AND status='active' AND COALESCE(last_visit, joined_on) < gym_today() - (SELECT inactive_days FROM settings WHERE id=1)) inactive,
+      (SELECT count(*) FROM member_overview WHERE NOT archived AND status='active' AND COALESCE(last_visit, joined_on) < gym_today() - (SELECT inactive_days FROM settings)) inactive,
       (SELECT count(*) FROM pt_sessions WHERE status='scheduled' AND (scheduled_at AT TIME ZONE 'Asia/Kolkata')::date = gym_today()) pt_today`),
     q(`SELECT to_char(m,'Mon') label, to_char(m,'YYYY-MM') AS month_key,
         COALESCE((SELECT sum(amount) FROM payments WHERE NOT voided AND date_trunc('month',paid_on)=m),0) income,
@@ -133,7 +157,7 @@ route('GET', '/reports', 'reports', async () => {
     q(`SELECT to_char(date_trunc('month',invoice_date),'Mon YY') label, count(*) invoices, sum(taxable) taxable, sum(cgst) cgst, sum(sgst) sgst, sum(total) total
        FROM invoices WHERE status<>'cancelled' AND invoice_date >= gym_today() - 365 GROUP BY date_trunc('month',invoice_date) ORDER BY date_trunc('month',invoice_date) DESC`),
     q(`SELECT id, name, phone, plan_name, last_visit, valid_until, gym_today() - COALESCE(last_visit, joined_on) days_away FROM member_overview
-       WHERE NOT archived AND status='active' AND COALESCE(last_visit, joined_on) < gym_today() - (SELECT inactive_days FROM settings WHERE id=1) ORDER BY days_away DESC LIMIT 100`),
+       WHERE NOT archived AND status='active' AND COALESCE(last_visit, joined_on) < gym_today() - (SELECT inactive_days FROM settings) ORDER BY days_away DESC LIMIT 100`),
     q(`SELECT COALESCE(source,'Not recorded') source, count(*) total, count(*) FILTER (WHERE status='won') won FROM leads GROUP BY 1 ORDER BY total DESC`),
     q(`SELECT method, sum(amount) total FROM payments WHERE NOT voided AND date_trunc('month',paid_on)=date_trunc('month',gym_today()::timestamp) GROUP BY method ORDER BY total DESC`),
   ]);
@@ -148,8 +172,19 @@ const settingsSchema = z.object({
   gst_enabled: s.bool, default_gst_rate: z.coerce.number().min(0).max(40), prices_include_gst: s.bool, sac_code: s.reqText,
   upi_id: s.text, invoice_prefix: z.string().trim().regex(/^[A-Za-z0-9-]{1,6}$/, 'must be 1 to 6 letters or numbers'), invoice_terms: s.text,
   weekly_off: z.coerce.number().int().min(-1).max(6).nullish().transform((v) => (v === -1 || v === null || v === undefined ? null : v)),
-  inactive_days: z.coerce.number().int().min(1).max(365), auto_expiry: s.bool, auto_dues: s.bool, auto_birthday: s.bool,
+  inactive_days: z.coerce.number().int().min(1).max(365), auto_expiry: s.bool, auto_dues: s.bool, auto_birthday: s.bool, auto_welcome: s.bool,
 });
 
-route('GET', '/settings', 'settings', async () => getSettings());
-route('PUT', '/settings', 'settings', async ({ body }) => update('settings', 1, parse(settingsSchema, body)));
+// Every screen that bills needs the GST settings, so anyone logged in may read them. Only the owner changes them.
+route('GET', '/settings', 'any', async ({ user }) => {
+  const [settings, photo] = await Promise.all([
+    getSettings(),
+    one<{ v: number }>(`SELECT extract(epoch FROM updated_at)::bigint v FROM photos WHERE kind='gym' AND ref_id=$1`, [user.gym_id]),
+  ]);
+  return { ...settings, gym_photo_v: photo?.v ?? null };
+});
+route('PUT', '/settings', 'settings', async ({ body, user }) => {
+  const { gym_photo } = parse(z.object({ gym_photo: s.photo }), body);
+  await savePhoto(undefined, 'gym', user.gym_id, gym_photo);
+  return update('settings', user.gym_id, parse(settingsSchema, body));
+});

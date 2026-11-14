@@ -10,6 +10,8 @@ import '@/lib/api/payroll';
 import '@/lib/api/finance';
 import '@/lib/api/leads';
 import '@/lib/api/comms';
+import '@/lib/api/branches';
+import '@/lib/api/super';
 
 export const dynamic = 'force-dynamic';
 

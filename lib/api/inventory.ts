@@ -40,7 +40,7 @@ route('POST', '/products/:id/stock', 'inventory', async ({ params, body, user })
     await db.query('UPDATE products SET stock=stock+$2, cost_price=CASE WHEN $3 THEN $4 ELSE cost_price END WHERE id=$1', [p.id, change, v.type === 'purchase', cost]);
     await db.query('INSERT INTO stock_movements (product_id, type, qty, unit_cost, note, created_by) VALUES ($1,$2,$3,$4,$5,$6)', [p.id, v.type, change, cost, v.note, user.id]);
     if (v.type === 'purchase' && v.record_expense && cost > 0) {
-      await db.query(`INSERT INTO expenses (category, description, vendor, amount, created_by) VALUES ('Stock purchase',$1,$2,$3,$4)`, [`${v.qty} x ${p.name}`, p.supplier, v.qty * cost, user.id]);
+      await db.query(`INSERT INTO expenses (category, description, vendor, amount, created_by, branch_id) VALUES ('Stock purchase',$1,$2,$3,$4,$5)`, [`${v.qty} x ${p.name}`, p.supplier, v.qty * cost, user.id, p.branch_id]);
     }
   });
 });
@@ -53,15 +53,19 @@ route('POST', '/products/sell', 'inventory', async ({ body, user }) => {
   return tx(async (db) => {
     const member = v.member_id ? await one<any>('SELECT * FROM members WHERE id=$1', [v.member_id], db) : null;
     const lines: Line[] = [];
+    let branch: number | null = null;
     for (const it of v.items) {
       const p = await one<any>('SELECT * FROM products WHERE id=$1 AND active FOR UPDATE', [it.product_id], db);
       if (!p) throw notFound('Product not found');
+      if (member && p.branch_id !== member.branch_id) throw bad(`${p.name} is stocked in a different branch from this member`);
+      if (branch !== null && p.branch_id !== branch) throw bad('All products in one sale must come from the same branch');
+      branch = p.branch_id;
       if (p.stock < it.qty) throw bad(`Only ${p.stock} ${p.unit} of ${p.name} in stock`);
       lines.push({ description: p.name, qty: it.qty, rate: p.sale_price, type: 'product', ref_id: p.id, gst_rate: p.gst_rate, sac_hsn: p.hsn });
     }
     const invoice = await createInvoice(db, {
       member_id: member?.id ?? null, customer_name: member?.name ?? v.customer_name ?? 'Walk-in customer', customer_phone: member?.phone ?? v.customer_phone,
-      items: lines, discount: v.discount ?? 0, payment: v.payment, user_id: user.id,
+      items: lines, discount: v.discount ?? 0, payment: v.payment, user_id: user.id, branch_id: branch,
     });
     for (const it of v.items) {
       await db.query('UPDATE products SET stock=stock-$2 WHERE id=$1', [it.product_id, it.qty]);

@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS settings (
   auto_dues boolean NOT NULL DEFAULT true,
   auto_birthday boolean NOT NULL DEFAULT true
 );
-INSERT INTO settings (id) VALUES (1) ON CONFLICT DO NOTHING;
+-- Each gym gets its own settings row from gym_defaults() near the end of this file.
 
 CREATE TABLE IF NOT EXISTS staff (
   id serial PRIMARY KEY,
@@ -363,16 +363,7 @@ CREATE TABLE IF NOT EXISTS message_templates (
   wa_template_name text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
-
-INSERT INTO message_templates (key, name, subject, body) VALUES
- ('expiry','Membership expiring','Your membership is expiring','Hi {{name}}, your {{plan}} membership at {{gym_name}} ends on {{expiry_date}}. Renew now to keep training without a break.'),
- ('expired','Membership expired','Your membership has ended','Hi {{name}}, your membership at {{gym_name}} ended on {{expiry_date}}. We miss you! Visit us or reply here to renew.'),
- ('dues','Payment due','Payment reminder','Hi {{name}}, you have a pending balance of Rs {{due_amount}} at {{gym_name}}. Please clear it at your next visit or pay by UPI. Thank you!'),
- ('birthday','Birthday wishes','Happy birthday!','Happy birthday {{name}}! Everyone at {{gym_name}} wishes you a strong and healthy year ahead.'),
- ('welcome','Welcome','Welcome to {{gym_name}}','Welcome to {{gym_name}}, {{name}}! We are excited to be part of your fitness journey.'),
- ('inactive','We miss you','We miss you','Hi {{name}}, we have not seen you at {{gym_name}} for a while. Come back this week and get back on track!'),
- ('lead_followup','Enquiry follow-up','Thanks for your enquiry','Hi {{name}}, thanks for your interest in {{gym_name}}. Would you like to book a free trial session this week?')
-ON CONFLICT (key) DO NOTHING;
+-- Built-in templates are added per gym by gym_defaults().
 
 CREATE TABLE IF NOT EXISTS messages (
   id bigserial PRIMARY KEY,
@@ -421,7 +412,6 @@ CREATE TABLE IF NOT EXISTS whatsapp_settings (
   quality_rating text,
   connected_at timestamptz
 );
-INSERT INTO whatsapp_settings (id) VALUES (1) ON CONFLICT DO NOTHING;
 
 ALTER TABLE members ADD COLUMN IF NOT EXISTS whatsapp_opt_out boolean NOT NULL DEFAULT false;
 
@@ -436,12 +426,6 @@ ALTER TABLE message_templates
 
 UPDATE message_templates SET category='MARKETING'
   WHERE key IN ('birthday','welcome','inactive','lead_followup') AND wa_template_id IS NULL AND category='UTILITY';
-
-INSERT INTO message_templates (key, name, subject, body, category) VALUES
- ('holiday_closed','Holiday: gym closed','Gym closed on {{holiday_date}}','Dear {{name}}, {{gym_name}} will remain closed on {{holiday_date}} for {{holiday_name}}. We will reopen on {{reopen_date}}. Thank you for your understanding.','UTILITY'),
- ('holiday_timings','Holiday: changed timings','Changed timings on {{holiday_date}}','Dear {{name}}, on {{holiday_date}} {{gym_name}} will be open from {{open_time}} to {{close_time}} for {{holiday_name}}. Regular timings resume the next day.','UTILITY'),
- ('holiday_wishes','Festival wishes','Happy {{holiday_name}}','Dear {{name}}, wishing you and your family a very happy {{holiday_name}}! Stay healthy and keep training. With warm wishes from {{gym_name}}.','MARKETING')
-ON CONFLICT (key) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS campaigns (
   id serial PRIMARY KEY,
@@ -471,9 +455,281 @@ CREATE OR REPLACE FUNCTION membership_valid(p_member int, p_day date) RETURNS bo
   )
 $$;
 
+/* =====================================================================
+   Many gyms on one site (SaaS)
+
+   Every row belongs to a gym, and most rows also belong to a branch.
+   The app runs each request as the role gympilot_tenant with the gym and
+   branch set for that request only, and the row-level security policies
+   below hide every other gym's rows. A bug in one screen therefore cannot
+   show one gym's data to another. Scripts and the super admin connect as
+   the table owner, which is not limited by these policies.
+   ===================================================================== */
+
 DROP VIEW IF EXISTS member_overview;
-CREATE VIEW member_overview AS
+
+CREATE TABLE IF NOT EXISTS gyms (
+  id serial PRIMARY KEY,
+  active boolean NOT NULL DEFAULT true,
+  notes text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS branches (
+  id serial PRIMARY KEY,
+  gym_id int NOT NULL REFERENCES gyms(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  address text, phone text,
+  active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- The gym and branch of the current request. Empty branch = all branches of the gym.
+CREATE OR REPLACE FUNCTION app_gym() RETURNS int LANGUAGE sql STABLE AS
+$$ SELECT nullif(current_setting('app.gym_id', true), '')::int $$;
+CREATE OR REPLACE FUNCTION app_branch() RETURNS int LANGUAGE sql STABLE AS
+$$ SELECT nullif(current_setting('app.branch_id', true), '')::int $$;
+
+CREATE TABLE IF NOT EXISTS slots (
+  id serial PRIMARY KEY,
+  name text NOT NULL,
+  start_time time NOT NULL,
+  end_time time NOT NULL,
+  active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS photos (
+  id serial PRIMARY KEY,
+  kind text NOT NULL,  -- member, user, gym
+  ref_id int NOT NULL,
+  mime text NOT NULL,
+  data bytea NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS gym_counters (
+  name text NOT NULL,
+  last_no int NOT NULL DEFAULT 0
+);
+
+-- New columns for this release
+ALTER TABLE members ADD COLUMN IF NOT EXISTS occupation text;
+ALTER TABLE members ADD COLUMN IF NOT EXISTS migrated boolean NOT NULL DEFAULT false;
+ALTER TABLE plans ADD COLUMN IF NOT EXISTS slot_ids int[] NOT NULL DEFAULT '{}';
+ALTER TABLE memberships ADD COLUMN IF NOT EXISTS slot_id int REFERENCES slots(id) ON DELETE SET NULL;
+ALTER TABLE memberships ADD COLUMN IF NOT EXISTS slot_name text;
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_welcome boolean NOT NULL DEFAULT true;
+
+-- Tables that belong to a gym as a whole, and tables that belong to one branch.
+CREATE OR REPLACE FUNCTION gp_gym_tables() RETURNS text[] LANGUAGE sql IMMUTABLE AS $$ SELECT ARRAY[
+  'settings','whatsapp_settings','message_templates','invoice_counters','gym_counters','photos','users','branches'] $$;
+CREATE OR REPLACE FUNCTION gp_branch_tables() RETURNS text[] LANGUAGE sql IMMUTABLE AS $$ SELECT ARRAY[
+  'staff','leads','lead_activities','members','plans','slots','invoices','invoice_items','payments','memberships','membership_freezes',
+  'pt_packages','pt_subscriptions','pt_sessions','products','stock_movements','biometric_devices','biometric_enrollments',
+  'biometric_punches','attendance','payroll_runs','payroll_items','salary_advances','expenses','messages','campaigns','device_commands'] $$;
+
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY gp_gym_tables() || gp_branch_tables() LOOP
+    CONTINUE WHEN t = 'branches';
+    EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS gym_id int REFERENCES gyms(id) ON DELETE CASCADE', t);
+  END LOOP;
+  FOREACH t IN ARRAY gp_branch_tables() || ARRAY['users'] LOOP
+    EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS branch_id int REFERENCES branches(id) ON DELETE CASCADE', t);
+  END LOOP;
+END $$;
+
+-- An install from before multi-gym support becomes gym 1 with one branch, keeping all its data.
+INSERT INTO gyms (id) SELECT 1 WHERE EXISTS (SELECT 1 FROM settings WHERE gym_id IS NULL) AND NOT EXISTS (SELECT 1 FROM gyms WHERE id = 1);
+INSERT INTO branches (id, gym_id, name) SELECT 1, 1, 'Main branch'
+  WHERE EXISTS (SELECT 1 FROM gyms WHERE id = 1) AND NOT EXISTS (SELECT 1 FROM branches WHERE gym_id = 1);
+SELECT setval(pg_get_serial_sequence('gyms', 'id'), GREATEST(COALESCE((SELECT max(id) FROM gyms), 0), 1), EXISTS (SELECT 1 FROM gyms));
+SELECT setval(pg_get_serial_sequence('branches', 'id'), GREATEST(COALESCE((SELECT max(id) FROM branches), 0), 1), EXISTS (SELECT 1 FROM branches));
+
+DO $$
+DECLARE t text;
+BEGIN
+  IF EXISTS (SELECT 1 FROM gyms WHERE id = 1) THEN
+    FOREACH t IN ARRAY gp_gym_tables() || gp_branch_tables() LOOP
+      CONTINUE WHEN t = 'branches';
+      EXECUTE format('UPDATE %I SET gym_id = 1 WHERE gym_id IS NULL', t);
+    END LOOP;
+    FOREACH t IN ARRAY gp_branch_tables() LOOP
+      EXECUTE format('UPDATE %I SET branch_id = 1 WHERE branch_id IS NULL', t);
+    END LOOP;
+    UPDATE users u SET branch_id = s.branch_id FROM staff s WHERE s.id = u.staff_id AND u.branch_id IS NULL;
+  END IF;
+  FOREACH t IN ARRAY gp_gym_tables() || gp_branch_tables() LOOP
+    CONTINUE WHEN t = 'branches';
+    EXECUTE format('ALTER TABLE %I ALTER COLUMN gym_id SET NOT NULL, ALTER COLUMN gym_id SET DEFAULT app_gym()', t);
+  END LOOP;
+  FOREACH t IN ARRAY gp_branch_tables() LOOP
+    EXECUTE format('ALTER TABLE %I ALTER COLUMN branch_id SET NOT NULL', t);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I (branch_id)', t || '_branch_idx', t);
+  END LOOP;
+END $$;
+
+-- One settings row per gym, keyed by the gym's id.
+ALTER TABLE settings DROP CONSTRAINT IF EXISTS settings_id_check;
+ALTER TABLE settings ALTER COLUMN id SET DEFAULT app_gym();
+ALTER TABLE whatsapp_settings DROP CONSTRAINT IF EXISTS whatsapp_settings_id_check;
+ALTER TABLE whatsapp_settings ALTER COLUMN id SET DEFAULT app_gym();
+CREATE UNIQUE INDEX IF NOT EXISTS settings_gym ON settings (gym_id);
+CREATE UNIQUE INDEX IF NOT EXISTS whatsapp_settings_gym ON whatsapp_settings (gym_id);
+
+-- Values that were unique for the whole site are now unique per gym or per branch.
+ALTER TABLE members DROP CONSTRAINT IF EXISTS members_member_code_key;
+ALTER TABLE members ALTER COLUMN member_code DROP DEFAULT;
+CREATE UNIQUE INDEX IF NOT EXISTS members_gym_code ON members (gym_id, member_code);
+ALTER TABLE invoices DROP CONSTRAINT IF EXISTS invoices_invoice_no_key;
+CREATE UNIQUE INDEX IF NOT EXISTS invoices_gym_no ON invoices (gym_id, invoice_no);
+ALTER TABLE invoice_counters DROP CONSTRAINT IF EXISTS invoice_counters_pkey;
+CREATE UNIQUE INDEX IF NOT EXISTS invoice_counters_gym_fy ON invoice_counters (gym_id, fy);
+ALTER TABLE products DROP CONSTRAINT IF EXISTS products_sku_key;
+CREATE UNIQUE INDEX IF NOT EXISTS products_gym_sku ON products (gym_id, sku);
+ALTER TABLE message_templates DROP CONSTRAINT IF EXISTS message_templates_key_key;
+CREATE UNIQUE INDEX IF NOT EXISTS message_templates_gym_key ON message_templates (gym_id, key);
+ALTER TABLE payroll_runs DROP CONSTRAINT IF EXISTS payroll_runs_month_key;
+CREATE UNIQUE INDEX IF NOT EXISTS payroll_runs_branch_month ON payroll_runs (branch_id, month);
+ALTER TABLE biometric_enrollments DROP CONSTRAINT IF EXISTS biometric_enrollments_pkey;
+CREATE UNIQUE INDEX IF NOT EXISTS biometric_enrollments_branch_pin ON biometric_enrollments (branch_id, device_user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS gym_counters_key ON gym_counters (gym_id, name);
+CREATE UNIQUE INDEX IF NOT EXISTS photos_ref ON photos (gym_id, kind, ref_id);
+CREATE INDEX IF NOT EXISTS branches_gym_idx ON branches (gym_id);
+CREATE INDEX IF NOT EXISTS users_gym_idx ON users (gym_id);
+CREATE INDEX IF NOT EXISTS whatsapp_settings_phone_idx ON whatsapp_settings (phone_number_id);
+
+-- Member numbers count up separately for each gym: M0001, M0002, ...
+INSERT INTO gym_counters (gym_id, name, last_no)
+  SELECT 1, 'member', (SELECT COALESCE(max(substring(member_code FROM '^M(\d+)$')::int), 0) FROM members WHERE gym_id = 1)
+  WHERE EXISTS (SELECT 1 FROM gyms WHERE id = 1)
+ON CONFLICT (gym_id, name) DO NOTHING;
+
+CREATE OR REPLACE FUNCTION next_member_code() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE n int; code text;
+BEGIN
+  IF NEW.member_code IS NOT NULL AND btrim(NEW.member_code) <> '' THEN
+    NEW.member_code := btrim(NEW.member_code);
+    RETURN NEW;
+  END IF;
+  LOOP  -- skips numbers already taken by members imported with their old codes
+    INSERT INTO gym_counters (gym_id, name, last_no) VALUES (NEW.gym_id, 'member', 1)
+      ON CONFLICT (gym_id, name) DO UPDATE SET last_no = gym_counters.last_no + 1 RETURNING last_no INTO n;
+    code := 'M' || lpad(n::text, 4, '0');
+    EXIT WHEN NOT EXISTS (SELECT 1 FROM members WHERE gym_id = NEW.gym_id AND member_code = code);
+  END LOOP;
+  NEW.member_code := code;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS members_code ON members;
+CREATE TRIGGER members_code BEFORE INSERT ON members FOR EACH ROW EXECUTE FUNCTION next_member_code();
+
+/* A new row takes its branch from the record it belongs to (a payment from its bill,
+   a bill from its member, and so on), otherwise from the branch chosen on screen.
+   Arguments are pairs of (parent table, column holding the parent id). */
+CREATE OR REPLACE FUNCTION fill_branch() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE i int; pid int; b int;
+BEGIN
+  IF NEW.branch_id IS NULL THEN
+    FOR i IN 0 .. (TG_NARGS / 2) - 1 LOOP
+      pid := (to_jsonb(NEW) ->> TG_ARGV[i * 2 + 1])::int;
+      CONTINUE WHEN pid IS NULL;
+      EXECUTE format('SELECT branch_id FROM %I WHERE id = $1', TG_ARGV[i * 2]) INTO b USING pid;
+      IF b IS NOT NULL THEN NEW.branch_id := b; EXIT; END IF;
+    END LOOP;
+  END IF;
+  NEW.branch_id := COALESCE(NEW.branch_id, app_branch());
+  IF NEW.branch_id IS NULL THEN
+    RAISE EXCEPTION 'Choose a branch at the top of the screen first. In "All branches" you can look at everything, but new records need a branch.'
+      USING ERRCODE = 'P0001';
+  END IF;
+  RETURN NEW;
+END $$;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT * FROM (VALUES
+    ('staff', ''), ('leads', ''), ('lead_activities', 'leads,lead_id'), ('members', 'leads,lead_id'), ('plans', ''), ('slots', ''),
+    ('invoices', 'members,member_id'), ('invoice_items', 'invoices,invoice_id'), ('payments', 'invoices,invoice_id'),
+    ('memberships', 'members,member_id'), ('membership_freezes', 'memberships,membership_id'), ('pt_packages', ''),
+    ('pt_subscriptions', 'members,member_id'), ('pt_sessions', 'pt_subscriptions,subscription_id'), ('products', ''),
+    ('stock_movements', 'products,product_id'), ('biometric_devices', ''), ('biometric_enrollments', 'members,member_id,staff,staff_id'),
+    ('biometric_punches', 'biometric_devices,device_id'), ('attendance', 'members,member_id,staff,staff_id'), ('payroll_runs', ''),
+    ('payroll_items', 'payroll_runs,run_id'), ('salary_advances', 'staff,staff_id'), ('expenses', ''),
+    ('messages', 'members,member_id,leads,lead_id,campaigns,campaign_id'), ('campaigns', ''), ('device_commands', 'biometric_devices,device_id')
+  ) AS x(tbl, parents) LOOP
+    EXECUTE format('DROP TRIGGER IF EXISTS a_fill_branch ON %I', r.tbl);
+    EXECUTE format('CREATE TRIGGER a_fill_branch BEFORE INSERT ON %I FOR EACH ROW EXECUTE FUNCTION fill_branch(%s)', r.tbl,
+      COALESCE((SELECT string_agg(quote_literal(p), ',') FROM unnest(string_to_array(nullif(r.parents, ''), ',')) p), ''));
+  END LOOP;
+END $$;
+
+-- Row-level security: each request only sees its own gym, and its own branch when one is chosen.
+CREATE OR REPLACE FUNCTION branch_in_gym(b int) RETURNS boolean LANGUAGE sql STABLE AS
+$$ SELECT EXISTS (SELECT 1 FROM branches WHERE id = b AND gym_id = app_gym()) $$;
+
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY gp_gym_tables() || gp_branch_tables() || ARRAY['gyms'] LOOP
+    EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+    EXECUTE format('DROP POLICY IF EXISTS tenant ON %I', t);
+  END LOOP;
+  FOREACH t IN ARRAY gp_branch_tables() LOOP
+    EXECUTE format($p$CREATE POLICY tenant ON %I
+      USING (gym_id = app_gym() AND (app_branch() IS NULL OR branch_id = app_branch()))
+      WITH CHECK (gym_id = app_gym() AND (app_branch() IS NULL OR branch_id = app_branch()) AND branch_in_gym(branch_id))$p$, t);
+  END LOOP;
+  FOREACH t IN ARRAY ARRAY['settings','whatsapp_settings','message_templates','invoice_counters','gym_counters','photos'] LOOP
+    EXECUTE format('CREATE POLICY tenant ON %I USING (gym_id = app_gym()) WITH CHECK (gym_id = app_gym())', t);
+  END LOOP;
+END $$;
+CREATE POLICY tenant ON users
+  USING (gym_id = app_gym() AND (app_branch() IS NULL OR branch_id IS NULL OR branch_id = app_branch()))
+  WITH CHECK (gym_id = app_gym() AND (branch_id IS NULL OR branch_in_gym(branch_id)));
+CREATE POLICY tenant ON branches
+  USING (gym_id = app_gym() AND (app_branch() IS NULL OR id = app_branch()))
+  WITH CHECK (gym_id = app_gym());
+CREATE POLICY tenant ON gyms FOR SELECT USING (id = app_gym());
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'gympilot_tenant') THEN
+    CREATE ROLE gympilot_tenant NOLOGIN;
+  END IF;
+  EXECUTE format('GRANT gympilot_tenant TO %I', current_user);
+END $$;
+GRANT USAGE ON SCHEMA public TO gympilot_tenant;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO gympilot_tenant;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO gympilot_tenant;
+REVOKE INSERT, UPDATE, DELETE ON gyms FROM gympilot_tenant;
+
+-- Settings, WhatsApp settings and built-in message templates for one gym. Safe to run again.
+CREATE OR REPLACE FUNCTION gym_defaults(g int) RETURNS void LANGUAGE sql AS $$
+  INSERT INTO settings (id, gym_id) VALUES (g, g) ON CONFLICT (id) DO NOTHING;
+  INSERT INTO whatsapp_settings (id, gym_id) VALUES (g, g) ON CONFLICT (id) DO NOTHING;
+  INSERT INTO message_templates (gym_id, key, name, subject, body, category) VALUES
+   (g,'expiry','Membership expiring','Your membership is expiring','Hi {{name}}, your {{plan}} membership at {{gym_name}} ends on {{expiry_date}}. Renew now to keep training without a break.','UTILITY'),
+   (g,'expired','Membership expired','Your membership has ended','Hi {{name}}, your membership at {{gym_name}} ended on {{expiry_date}}. We miss you! Visit us or reply here to renew.','UTILITY'),
+   (g,'dues','Payment due','Payment reminder','Hi {{name}}, you have a pending balance of Rs {{due_amount}} at {{gym_name}}. Please clear it at your next visit or pay by UPI. Thank you!','UTILITY'),
+   (g,'birthday','Birthday wishes','Happy birthday!','Happy birthday {{name}}! Everyone at {{gym_name}} wishes you a strong and healthy year ahead.','MARKETING'),
+   (g,'welcome','Welcome','Welcome to {{gym_name}}','Welcome to {{gym_name}}, {{name}}! We are excited to be part of your fitness journey.','MARKETING'),
+   (g,'inactive','We miss you','We miss you','Hi {{name}}, we have not seen you at {{gym_name}} for a while. Come back this week and get back on track!','MARKETING'),
+   (g,'lead_followup','Enquiry follow-up','Thanks for your enquiry','Hi {{name}}, thanks for your interest in {{gym_name}}. Would you like to book a free trial session this week?','MARKETING'),
+   (g,'holiday_closed','Holiday: gym closed','Gym closed on {{holiday_date}}','Dear {{name}}, {{gym_name}} will remain closed on {{holiday_date}} for {{holiday_name}}. We will reopen on {{reopen_date}}. Thank you for your understanding.','UTILITY'),
+   (g,'holiday_timings','Holiday: changed timings','Changed timings on {{holiday_date}}','Dear {{name}}, on {{holiday_date}} {{gym_name}} will be open from {{open_time}} to {{close_time}} for {{holiday_name}}. Regular timings resume the next day.','UTILITY'),
+   (g,'holiday_wishes','Festival wishes','Happy {{holiday_name}}','Dear {{name}}, wishing you and your family a very happy {{holiday_name}}! Stay healthy and keep training. With warm wishes from {{gym_name}}.','MARKETING')
+  ON CONFLICT (gym_id, key) DO NOTHING;
+$$;
+SELECT gym_defaults(id) FROM gyms;
+
+CREATE VIEW member_overview WITH (security_invoker = true) AS
 SELECT m.*,
+  ph.photo_v,
+  cur.slot_id, cur.slot_name,
   be.device_user_id AS biometric_id,
   cur.id AS membership_id, cur.plan_name, cur.start_date, cur.end_date,
   lim.valid_until,
@@ -489,6 +745,7 @@ SELECT m.*,
   v.last_visit
 FROM members m
 LEFT JOIN biometric_enrollments be ON be.member_id = m.id
+LEFT JOIN LATERAL (SELECT extract(epoch FROM p.updated_at)::bigint AS photo_v FROM photos p WHERE p.kind = 'member' AND p.ref_id = m.id) ph ON true
 LEFT JOIN LATERAL (
   SELECT ms.* FROM memberships ms WHERE ms.member_id = m.id AND ms.status = 'active'
   ORDER BY (gym_today() BETWEEN ms.start_date AND ms.end_date) DESC, ms.end_date DESC LIMIT 1
@@ -496,3 +753,8 @@ LEFT JOIN LATERAL (
 LEFT JOIN LATERAL (SELECT max(ms.end_date) AS valid_until FROM memberships ms WHERE ms.member_id = m.id AND ms.status = 'active') lim ON true
 LEFT JOIN LATERAL (SELECT sum(i.balance) AS dues FROM invoices i WHERE i.member_id = m.id AND i.status IN ('unpaid','partial')) d ON true
 LEFT JOIN LATERAL (SELECT max(a.day) AS last_visit FROM attendance a WHERE a.member_id = m.id) v ON true;
+
+-- Must come after every table and view above.
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO gympilot_tenant;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO gympilot_tenant;
+REVOKE INSERT, UPDATE, DELETE ON gyms FROM gympilot_tenant;

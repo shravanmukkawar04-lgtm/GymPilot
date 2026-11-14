@@ -26,7 +26,7 @@ function Photos() {
 export default function LoginPage() {
   const [state, setState] = useState<any>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
-  const [v, setV] = useState<any>({ gym_name: '', name: '', email: '', password: '' });
+  const [v, setV] = useState<any>({ email: '', password: '' });
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -36,14 +36,13 @@ export default function LoginPage() {
     }).catch((e) => setLoadErr(e.message));
   }, []);
 
-  if (loadErr) return <div className="max-w-md mx-auto p-6 mt-20"><ErrorNote message={`${loadErr} Check that DATABASE_URL in .env is correct and that you ran "npm run db:setup".`} /></div>;
+  if (loadErr) return <div className="max-w-md mx-auto p-6 mt-20"><ErrorNote message={`${loadErr} Check that DATABASE_URL is correct and that "npm run db:setup" has been run.`} /></div>;
   if (!state) return <Loading />;
-  const setup = state.needsSetup;
-  const brand = setup ? 'GymPilot' : state.gym_name;
+  const brand = 'GymPilot';
   const input = (name: string, label: string, type = 'text', help?: string) => (
     <div>
       <label htmlFor={name} className="block text-[13px] font-medium text-ink mb-1">{label}</label>
-      <input id={name} className="input !h-11" type={type} required minLength={type === 'password' && setup ? 8 : undefined} value={v[name]} onChange={(e) => setV({ ...v, [name]: e.target.value })} />
+      <input id={name} className="input !h-11" type={type} required value={v[name]} onChange={(e) => setV({ ...v, [name]: e.target.value })} />
       {help && <p className="text-muted text-xs mt-1">{help}</p>}
     </div>
   );
@@ -75,22 +74,21 @@ export default function LoginPage() {
         <form className="w-full max-w-sm space-y-4" onSubmit={async (e) => {
           e.preventDefault(); setBusy(true); setErr(null);
           try {
-            await api(setup ? '/auth/setup' : '/auth/login', { body: setup ? v : { email: v.email, password: v.password } });
+            await api('/auth/login', { body: { email: v.email, password: v.password } });
             window.location.href = '/dashboard';
           } catch (x: any) { setErr(x.message); setBusy(false); }
         }}>
           <div className="mb-2">
-            <h1 className="text-2xl font-semibold">{setup ? 'Set up your gym' : 'Welcome back'}</h1>
-            <p className="text-muted mt-1">{setup ? 'Create the owner account. It takes less than a minute.' : 'Log in to see what is happening at your gym today.'}</p>
+            <h1 className="text-2xl font-semibold">Welcome back</h1>
+            <p className="text-muted mt-1">Log in to see what is happening at your gym today.</p>
           </div>
-          {setup && input('gym_name', 'Gym name')}
-          {setup && input('name', 'Your name')}
           {input('email', 'Email', 'email')}
-          {input('password', 'Password', 'password', setup ? 'At least 8 characters' : undefined)}
+          {input('password', 'Password', 'password')}
           {err && <ErrorNote message={err} />}
           <Button variant="primary" type="submit" disabled={busy} className="w-full !h-11">
-            {busy && <Loader2 className="animate-spin" />}{setup ? 'Create my account' : 'Log in'}
+            {busy && <Loader2 className="animate-spin" />}Log in
           </Button>
+          <p className="text-muted text-[13px] text-center">New gym? Contact GymPilot and we will set up your account.</p>
         </form>
       </main>
     </div>

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { insert, one, q, tx, update } from '../db';
 import { notFound, parse, route } from './router';
 import * as s from './schemas';
-import { addPayment, cancelInvoice, createInvoice, getSettings, voidPayment } from '../services/billing';
+import { addPayment, addPayments, cancelInvoice, createInvoice, getSettings, voidPayment } from '../services/billing';
 
 const invoiceSchema = z.object({
   member_id: s.idOpt, customer_name: s.text, customer_phone: s.phoneOpt, due_date: s.date, notes: s.text, discount: s.moneyOpt, payment: s.payment,
@@ -53,6 +53,11 @@ route('GET', '/invoices/:id', 'billing', async ({ params }) => {
 });
 
 route('POST', '/invoices/:id/payments', 'billing', async ({ params, body, user }) => {
+  // { payments: [...] } records a split payment, such as part cash and part UPI.
+  if (Array.isArray(body.payments)) {
+    const list = parse(z.array(paymentSchema).min(1).max(4), body.payments);
+    return tx((db) => addPayments(db, Number(params.id), list, user.id));
+  }
   const v = parse(paymentSchema, body);
   return tx((db) => addPayment(db, Number(params.id), v, user.id));
 });

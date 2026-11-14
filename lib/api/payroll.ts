@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Db, one, q, tx } from '../db';
+import { Db, one, q, tenant, tx } from '../db';
 import { bad, notFound, parse, route } from './router';
 import * as s from './schemas';
 import { getSettings } from '../services/billing';
@@ -29,7 +29,7 @@ function compute(i: { base_salary: number; working_days: number; present_days: n
 async function generate(db: Db, month: string) {
   const settings = await getSettings(db);
   const first = `${month}-01`;
-  const run = (await one<any>(`INSERT INTO payroll_runs (month) VALUES ($1) ON CONFLICT (month) DO UPDATE SET month=EXCLUDED.month RETURNING *`, [first], db))!;
+  const run = (await one<any>(`INSERT INTO payroll_runs (month) VALUES ($1) ON CONFLICT (branch_id, month) DO UPDATE SET month=EXCLUDED.month RETURNING *`, [first], db))!;
   const staff = await q<any>(`SELECT * FROM staff WHERE active AND joined_on < ($1::date + interval '1 month')`, [first], db);
   const fullDays = workingDays(month, settings.weekly_off);
 
@@ -61,7 +61,13 @@ async function generate(db: Db, month: string) {
   return run;
 }
 
+/** Salaries are worked out per branch, because staff and attendance belong to a branch. */
+const needBranch = () => {
+  if (!tenant()?.branchId) throw bad('Choose a branch at the top of the screen to see its salaries.');
+};
+
 route('GET', '/payroll', 'payroll', async ({ query }) => {
+  needBranch();
   const month = parse(monthParam, query.get('month'));
   const run = await one<any>('SELECT * FROM payroll_runs WHERE month=$1', [`${month}-01`]);
   if (!run) return { run: null, items: [] };
@@ -70,6 +76,7 @@ route('GET', '/payroll', 'payroll', async ({ query }) => {
 });
 
 route('POST', '/payroll/generate', 'payroll', async ({ body }) => {
+  needBranch();
   const month = parse(monthParam, body.month);
   return tx((db) => generate(db, month));
 });

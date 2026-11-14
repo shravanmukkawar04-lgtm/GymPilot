@@ -1,5 +1,5 @@
 import nodemailer from 'nodemailer';
-import { Db, one, pool, q } from '../db';
+import { Db, one, q } from '../db';
 import { bad } from '../api/router';
 import { getSettings } from './billing';
 import { sendTemplate, waConfig, WaConfig } from './whatsapp';
@@ -106,7 +106,7 @@ const AUDIENCE_SQL: Record<string, string> = {
   expired: `archived = false AND status = 'expired'`,
   expiring: `archived = false AND valid_until BETWEEN gym_today() AND gym_today() + 7`,
   dues: `archived = false AND dues > 0`,
-  inactive: `archived = false AND status = 'active' AND COALESCE(last_visit, joined_on) < gym_today() - (SELECT inactive_days FROM settings WHERE id=1)`,
+  inactive: `archived = false AND status = 'active' AND COALESCE(last_visit, joined_on) < gym_today() - (SELECT inactive_days FROM settings)`,
   birthdays: `archived = false AND to_char(dob,'MM-DD') = to_char(gym_today(),'MM-DD')`,
 };
 
@@ -114,7 +114,7 @@ export const memberVars = (m: any, gym: string) => ({
   name: m.name, plan: m.plan_name ?? '', expiry_date: formatDate(m.valid_until), due_amount: m.dues ?? 0, gym_name: gym,
 });
 
-async function queueOne(db: Db, a: {
+async function queueOne(db: Db | undefined, a: {
   member_id?: number | null; lead_id?: number | null; to_name: string; phone?: string | null; email?: string | null;
   channel: string; template?: any; subject?: string | null; body: string; vars: Record<string, unknown>;
   origin: string; dedupe_key?: string | null; user_id?: number | null; campaign_id?: number | null;
@@ -131,7 +131,7 @@ export async function queueAudience(input: {
   audience: string; member_id?: number | null; lead_id?: number | null; template_id?: number | null;
   channel: string; body?: string | null; subject?: string | null; user_id: number; vars?: Record<string, string>; campaign_name?: string | null;
 }) {
-  const db = pool();
+  const db = undefined; // the request's own connection
   const s = await getSettings();
   const template = input.template_id ? await one<any>('SELECT * FROM message_templates WHERE id=$1', [input.template_id]) : null;
   // A chosen template is sent exactly as approved, so its wording cannot drift from what Meta reviewed.
@@ -193,7 +193,7 @@ export const countAudience = async (audience: string) => {
 
 /** Creates today's reminders. Repeat runs add nothing, because each reminder has a unique key. */
 export async function runAutomations() {
-  const db = pool();
+  const db = undefined; // the request's own connection
   const s = await getSettings();
   const templates = Object.fromEntries((await q<any>('SELECT * FROM message_templates WHERE key IS NOT NULL')).map((t) => [t.key, t]));
   const today = (await one<{ d: string }>('SELECT gym_today() d'))!.d;
@@ -226,4 +226,23 @@ export async function runAutomations() {
   }
   const sent = created ? await flushQueue() : 0;
   return { created, sent };
+}
+
+/**
+ * Welcomes a new member on WhatsApp. Sends at once when WhatsApp Business is connected
+ * and the Welcome template is approved; otherwise it waits in Messages for one-click sending.
+ */
+export async function sendWelcome(memberId: number): Promise<{ status: 'sent' | 'queued' | 'failed' | 'skipped'; error?: string | null }> {
+  const t = await one<any>(`SELECT * FROM message_templates WHERE key='welcome'`);
+  const m = await one<any>('SELECT * FROM member_overview WHERE id=$1', [memberId]);
+  if (!t || !m?.phone) return { status: 'skipped' };
+  const s = await getSettings();
+  const r = await queueOne(undefined, {
+    member_id: m.id, to_name: m.name, phone: m.phone, email: m.email, channel: 'whatsapp', template: t, body: t.body,
+    vars: memberVars(m, s.gym_name), origin: 'automatic', dedupe_key: `welcome:${m.id}`,
+  });
+  if (!r) return { status: 'skipped' };
+  await flushQueue([r.id]);
+  const after = (await one<{ status: string; error: string | null }>('SELECT status, error FROM messages WHERE id=$1', [r.id]))!;
+  return { status: after.status === 'sent' ? 'sent' : after.status === 'failed' ? 'failed' : 'queued', error: after.error };
 }

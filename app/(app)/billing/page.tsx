@@ -3,7 +3,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Plus, ReceiptText, Trash2 } from 'lucide-react';
 import { api, fmtDate, inr, toast, useApi } from '@/lib/client';
-import { Button, Card, Empty, ErrorNote, Loading, MemberPicker, METHODS, Modal, PageHeader, Stat, StatusBadge, Table, Tabs, toPayment } from '@/components/ui';
+import { Button, Card, Empty, ErrorNote, Loading, MemberPicker, METHODS, PayInputs, Modal, PageHeader, Stat, StatusBadge, Table, Tabs, toPayment } from '@/components/ui';
 
 function NewBill({ onClose, onDone }: { onClose: () => void; onDone: (id: number) => void }) {
   const [items, setItems] = useState([{ description: '', qty: 1, rate: '' as any }]);
@@ -33,7 +33,7 @@ function NewBill({ onClose, onDone }: { onClose: () => void; onDone: (id: number
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4">
         <div><label htmlFor="bd" className="block text-[13px] font-medium text-ink mb-1">Discount (₹)</label><input id="bd" className="input" type="number" min={0} step="any" value={discount} onChange={(e) => setDiscount(e.target.value)} /></div>
         <div><label htmlFor="bp" className="block text-[13px] font-medium text-ink mb-1">Received now (₹)</label><input id="bp" className="input" type="number" min={0} step="any" value={pay.pay_amount} onChange={(e) => setPay({ ...pay, pay_amount: e.target.value })} /></div>
-        <div><label htmlFor="bm" className="block text-[13px] font-medium text-ink mb-1">Paid by</label><select id="bm" className="input" value={pay.pay_method} onChange={(e) => setPay({ ...pay, pay_method: e.target.value })}>{METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}</select></div>
+        <PayInputs pay={pay} setPay={setPay} amount={pay.pay_amount} />
       </div>
       <div className="bg-canvas rounded-lg p-3 mt-4 flex justify-between"><span className="text-muted">Before discount</span><span className="font-semibold text-ink tabular-nums">{inr(gross)}</span></div>
       {err && <div className="mt-3"><ErrorNote message={err} /></div>}

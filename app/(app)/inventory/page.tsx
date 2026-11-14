@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Package, PackagePlus, Plus, ShoppingCart, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { api, billTotal, fmtDateTime, inr, toast, useApi } from '@/lib/client';
-import { Badge, Button, Card, Empty, ErrorNote, Field, FormFields, FormModal, Loading, MemberPicker, METHODS, Modal, PageHeader, Stat, Table, Tabs, toPayment } from '@/components/ui';
+import { Badge, Button, Card, Empty, ErrorNote, Field, FormFields, FormModal, Loading, MemberPicker, PayInputs, Modal, PageHeader, Stat, Table, Tabs, toPayment } from '@/components/ui';
 
 const productFields: Field[] = [
   { name: 'name', label: 'Product name', required: true, full: true },
@@ -50,7 +50,7 @@ function Sell({ products, onClose, onDone }: { products: any[]; onClose: () => v
       </div>
       <div className="grid grid-cols-2 gap-3 mt-3">
         <div><label className="block text-[13px] font-medium text-ink mb-1" htmlFor="sp">Received now (₹)</label><input id="sp" className="input" type="number" min={0} step="any" value={amount} onChange={(e) => { setTouched(true); setPay({ ...pay, pay_amount: e.target.value }); }} /></div>
-        <div><label className="block text-[13px] font-medium text-ink mb-1" htmlFor="sm">Paid by</label><select id="sm" className="input" value={pay.pay_method} onChange={(e) => setPay({ ...pay, pay_method: e.target.value })}>{METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}</select></div>
+        <PayInputs pay={pay} setPay={setPay} amount={amount} />
       </div>
       <div className="bg-canvas rounded-lg p-3 mt-4 flex justify-between"><span className="text-muted">Total</span><span className="font-semibold text-ink text-lg tabular-nums">{inr(total)}</span></div>
       {err && <div className="mt-3"><ErrorNote message={err} /></div>}

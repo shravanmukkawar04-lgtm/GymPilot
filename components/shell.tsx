@@ -3,11 +3,11 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import {
-  BarChart3, CalendarCheck, Dumbbell, Fingerprint, LayoutDashboard, LogOut, Megaphone, Menu, MessageCircle, Package,
+  BarChart3, Building2, CalendarCheck, Dumbbell, Fingerprint, LayoutDashboard, LogOut, Megaphone, Menu, MessageCircle, Package,
   Plus, ReceiptText, Search, Settings, UserCog, Users, Wallet, HandCoins,
 } from 'lucide-react';
-import { api } from '@/lib/client';
-import { Loading, Toaster } from './ui';
+import { api, photoUrl } from '@/lib/client';
+import { Avatar, Loading, Toaster } from './ui';
 
 const NAV = [
   { group: '', items: [{ href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, perm: 'dashboard' }] },
@@ -40,7 +40,33 @@ const QUICK = [
 ];
 
 const UserCtx = createContext<any>(null);
+const ShellCtx = createContext<any>(null);
 export const useUser = () => useContext(UserCtx);
+/** The whole login state: gym, branches and which branch is chosen (branch_id null = all branches). */
+export const useShell = () => useContext(ShellCtx);
+
+function BranchSwitch({ state }: { state: any }) {
+  const [busy, setBusy] = useState(false);
+  if (!state.branches?.length) return null;
+  if (!state.can_switch_branch) {
+    return <span className="hidden sm:inline-flex items-center gap-1.5 h-10 px-3 rounded-lg bg-canvas text-ink font-medium whitespace-nowrap"><Building2 className="size-4 text-muted" />{state.branches[0].name}</span>;
+  }
+  return (
+    <label className="relative shrink-0">
+      <span className="sr-only">Branch</span>
+      <Building2 className="absolute left-3 top-3 size-4 text-muted pointer-events-none" />
+      <select className="input !pl-9 !w-auto max-w-[11rem] sm:max-w-[14rem] font-medium" disabled={busy} value={state.branch_id ?? 'all'}
+        onChange={async (e) => {
+          setBusy(true);
+          await api('/auth/branch', { body: { branch_id: e.target.value === 'all' ? 'all' : Number(e.target.value) } }).catch(() => {});
+          window.location.reload();
+        }}>
+        <option value="all">All branches</option>
+        {state.branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+      </select>
+    </label>
+  );
+}
 export const canSee = (u: any, perm: string) => u?.permissions?.includes('*') || u?.permissions?.includes(perm);
 
 function GlobalSearch() {
@@ -119,7 +145,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const sidebar = (
     <nav className="flex flex-col h-full bg-ink text-white/75 w-60 no-print">
       <div className="flex items-center gap-2.5 px-4 h-16 shrink-0">
-        <span className="flex size-8 items-center justify-center rounded-lg bg-brand text-white"><CalendarCheck className="size-[18px]" /></span>
+        {state.gym_photo_v
+          // eslint-disable-next-line @next/next/no-img-element
+          ? <img src={photoUrl('gym', state.gym_id, state.gym_photo_v)!} alt="" className="size-8 rounded-lg object-cover" />
+          : <span className="flex size-8 items-center justify-center rounded-lg bg-brand text-white"><CalendarCheck className="size-[18px]" /></span>}
         <span className="font-semibold text-white truncate">{state.gym_name}</span>
       </div>
       <div className="flex-1 overflow-y-auto px-2.5 pb-3">
@@ -143,6 +172,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         })}
       </div>
       <div className="border-t border-white/10 p-3 flex items-center gap-2">
+        <Avatar name={user.name} size={32} src={photoUrl('user', user.id, user.photo_v)} />
         <div className="min-w-0 flex-1">
           <div className="text-white font-medium truncate">{user.name}</div>
           <div className="text-xs text-white/50 capitalize">{user.role}</div>
@@ -156,6 +186,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   return (
     <UserCtx.Provider value={user}>
+    <ShellCtx.Provider value={state}>
       <div className="flex h-dvh">
         <div className="hidden lg:block shrink-0">{sidebar}</div>
         {menu && (
@@ -168,6 +199,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <header className="flex items-center gap-2 sm:gap-3 h-16 px-4 sm:px-6 bg-surface border-b border-line shrink-0 no-print">
             <button aria-label="Open menu" className="lg:hidden p-2 -ml-2 text-ink" onClick={() => setMenu(true)}><Menu className="size-5" /></button>
             {isOwner ? <GlobalSearch /> : <div className="flex-1 font-semibold text-ink">Hello, {user.name.split(' ')[0]}</div>}
+            <BranchSwitch state={state} />
             {isOwner && <QuickAdd />}
           </header>
           <main className="flex-1 overflow-y-auto">
@@ -176,6 +208,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </div>
       </div>
       <Toaster />
+    </ShellCtx.Provider>
     </UserCtx.Provider>
   );
 }

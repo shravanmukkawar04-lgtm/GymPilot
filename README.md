@@ -1,10 +1,33 @@
 # GymPilot
 
-Gym management software built with Next.js and Neon PostgreSQL.
+Gym management software built with Next.js and Neon PostgreSQL. One website serves many gyms, and each gym can have several branches.
 
 Modules: Members and plans, Enquiries (leads), Trainers and staff, Personal training, Biometric attendance, Shop and stock, Messages, Bills and payments (GST, UPI QR), Expenses, Salaries, Reports.
 
-Logins: **Owner** sees everything. **Trainer** sees only their own clients, schedule and commission. To add a role, add one line to `PERMISSIONS` in `lib/api/session.ts`.
+Logins: **Owner** sees every branch of their gym and switches between them at the top of the screen. **Branch manager** runs one branch (no gym settings or salaries). **Trainer** sees only their own clients, schedule and commission. To add a role, add one line to `PERMISSIONS` in `lib/api/session.ts`.
+
+## Many gyms on one site
+
+Each gym only ever sees its own data. This is enforced by the database itself (row-level security), not just by the screens: every request runs as the `gympilot_tenant` role with its gym and branch set, so a mistake in one screen cannot show one gym's members to another.
+
+Gym accounts are created by you, not by a public sign-up:
+
+1. Set `SUPERADMIN_KEY` (24+ random characters) in `.env` and in Vercel.
+2. Open `/superadmin` (it is not linked anywhere) and enter the key.
+3. Click **New gym**: gym name and photo, first branch, owner name, photo, email and password. Share the login with the owner.
+
+From the same page you can pause a gym (its people are logged out and its machines and reminders stop; nothing is deleted), resume it, reset an owner's password or add another owner.
+
+## Branches
+
+Owners add branches and branch manager logins in **Settings → Branches**. Members, plans, time slots, staff, bills, expenses, stock, attendance, enquiries and salaries belong to a branch. Gym details, GST settings, message templates and the WhatsApp number are shared by all branches.
+
+In **All branches** view the owner can see everything together, for example on the dashboard and reports. New records need a branch, so the app asks to choose one first. Payments, renewals and other records that belong to a member follow that member's branch automatically.
+
+## Moving members from another system
+
+- **Add member → Existing member** keeps their old member ID, original join date and current plan dates. Enter only the amount they still owe; money already paid in the old system is not counted as new income.
+- **Members → Import from Excel** adds everyone at once from a CSV file (in Excel: File → Save As → CSV). Download the template on that screen. Members whose phone number is already in the branch are skipped, so running the same file twice is safe.
 
 ## First-time setup
 
@@ -18,9 +41,9 @@ Logins: **Owner** sees everything. **Trainer** sees only their own clients, sche
    npm run dev
    ```
 
-5. Open http://localhost:3000 and create the owner account.
+5. Set `SUPERADMIN_KEY`, open http://localhost:3000/superadmin and create your first gym. Then log in at http://localhost:3000 with the owner email and password.
 
-Optional sample data to explore with: `npm run db:seed`. To wipe everything and start clean: `npm run db:reset -- --yes`, then `npm run db:setup`.
+Optional sample data to explore with: `npm run db:seed` creates a demo gym (login `demo@gympilot.test` / `demo12345`). To wipe everything and start clean: `npm run db:reset -- --yes`, then `npm run db:setup`.
 
 For production: `npm run build`, then `npm start`.
 
@@ -44,7 +67,7 @@ Reminders for expiring plans, dues and birthdays are prepared daily in **Message
 
 ### WhatsApp Business
 
-Connect under **Messages → WhatsApp setup**. The page lists what to collect from Meta. Your token is stored encrypted using `JWT_SECRET`, so if you change that secret, connect again.
+Each gym connects its own number under **Messages → WhatsApp setup** (owner only). The page lists what to collect from Meta. All gyms share one webhook address; each event is matched to its gym by the phone number it was sent to, and checked with that gym's App Secret. Your token is stored encrypted using `JWT_SECRET`, so if you change that secret, connect again.
 
 1. **Messages → Templates**: create a template, or use the built-in holiday ones, and click **Send for approval**.
 2. Click **Check approval** until it shows Approved. Meta usually takes minutes to a day.
@@ -61,7 +84,9 @@ WhatsApp only permits bulk sending with approved templates, to people who agreed
 | SMS | `SMS_GATEWAY_URL`, with `{phone}` and `{message}` in the URL. Indian SMS also needs DLT registration with your provider. |
 | Email | `SMTP_URL`, `EMAIL_FROM` |
 
-Reminders are created when the owner opens the app. To run them on a schedule, set `CRON_SECRET` and call `GET /api/cron/reminders` daily with header `Authorization: Bearer <CRON_SECRET>`.
+Reminders are created when the owner opens the app. To run them on a schedule, set `CRON_SECRET` and call `GET /api/cron/reminders` daily with header `Authorization: Bearer <CRON_SECRET>`. It runs every active gym.
+
+New members get a WhatsApp welcome message (the **Welcome** template; get it approved in Messages → Templates for automatic sending). Turn it off in Settings, or untick it while adding a member.
 
 ## Notes
 

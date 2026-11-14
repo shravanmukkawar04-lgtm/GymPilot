@@ -62,8 +62,9 @@ route('POST', '/staff/:id/login', 'trainers', async ({ params, body }) => {
   if (!st) throw notFound('Staff member not found');
   if (!st.is_trainer) throw bad('Only trainers can have a login for now');
   const hash = await bcrypt.hash(password, 10);
-  await q(`INSERT INTO users (name, email, password_hash, role, staff_id) VALUES ($1,$2,$3,'trainer',$4)
-           ON CONFLICT (staff_id) DO UPDATE SET email=EXCLUDED.email, password_hash=EXCLUDED.password_hash, active=true`, [st.name, email, hash, st.id]);
+  // A trainer's login works only in the branch the trainer belongs to.
+  await q(`INSERT INTO users (name, email, password_hash, role, staff_id, branch_id) VALUES ($1,$2,$3,'trainer',$4,$5)
+           ON CONFLICT (staff_id) DO UPDATE SET email=EXCLUDED.email, password_hash=EXCLUDED.password_hash, branch_id=EXCLUDED.branch_id, active=true`, [st.name, email, hash, st.id, st.branch_id]);
 });
 
 route('DELETE', '/staff/:id/login', 'trainers', async ({ params }) => {

@@ -1,8 +1,12 @@
-import { one, pool, q, tx } from '../lib/db';
+import { asTenant, one, pool, q, tx } from '../lib/db';
+import { createGym } from '../lib/services/gyms';
 import { sellMembership, createInvoice } from '../lib/services/billing';
 import { processPunch, manualCheck } from '../lib/services/attendance';
 
-/** Adds realistic sample data so you can explore the app. Refuses to run if members already exist. */
+/** Creates a demo gym full of realistic sample data, so you can explore the app. Log in with the email and password printed at the end. */
+
+const DEMO_EMAIL = process.env.SEED_EMAIL || 'demo@gympilot.test';
+const DEMO_PASSWORD = process.env.SEED_PASSWORD || 'demo12345';
 
 const FIRST = ['Rohan', 'Priya', 'Amit', 'Sneha', 'Vikram', 'Neha', 'Arjun', 'Kavya', 'Rahul', 'Pooja', 'Siddharth', 'Ananya', 'Karan', 'Meera', 'Aditya', 'Isha', 'Nikhil', 'Riya', 'Manish', 'Divya', 'Yash', 'Tanvi', 'Harsh', 'Shreya', 'Omkar', 'Gauri', 'Sagar', 'Aarti', 'Tejas', 'Nisha', 'Pranav', 'Sakshi', 'Akash', 'Komal', 'Varun', 'Swati'];
 const LAST = ['Sharma', 'Patil', 'Deshmukh', 'Kulkarni', 'Joshi', 'Verma', 'Shinde', 'Nair', 'Gupta', 'Jadhav', 'Pawar', 'Iyer'];
@@ -11,13 +15,23 @@ const phone = (i: number) => `98${String(10000000 + i * 7919).slice(0, 8)}`;
 const dayOffset = (n: number) => new Date(Date.now() + 5.5 * 3600e3 + n * 86400e3).toISOString().slice(0, 10);
 
 async function main() {
+  if (await one('SELECT 1 FROM users WHERE email=$1', [DEMO_EMAIL])) { console.error(`${DEMO_EMAIL} already exists, so the demo gym was not added again.`); process.exit(1); }
+  const demo = await createGym({ gym_name: 'Iron Temple Fitness', branch_name: 'MG Road', owner_name: 'Demo Owner', email: DEMO_EMAIL, password: DEMO_PASSWORD });
+  await asTenant(demo.gym_id, demo.branch_id, fill);
+  console.log(`Demo gym added. Log in with ${DEMO_EMAIL} / ${DEMO_PASSWORD}`);
+  await pool().end();
+}
+
+async function fill() {
   const { c } = (await one<{ c: number }>('SELECT count(*) c FROM members'))!;
   if (c > 0) { console.error('Members already exist, so sample data was not added.'); process.exit(1); }
 
-  await q(`UPDATE settings SET address='12, MG Road, Pune 411001', phone='020 4000 1234', upi_id='demogym@upi', invoice_terms='Fees once paid are non-refundable.' WHERE id=1`);
+  await q(`UPDATE settings SET address='12, MG Road, Pune 411001', phone='020 4000 1234', upi_id='demogym@upi', invoice_terms='Fees once paid are non-refundable.'`);
+  const slots = await Promise.all([['Early morning', '05:00', '07:00'], ['Morning', '07:00', '10:00'], ['Evening', '17:00', '21:00']].map(([n, a, b]) =>
+    one<any>('INSERT INTO slots (name, start_time, end_time) VALUES ($1,$2,$3) RETURNING *', [n, a, b])));
 
   const plans = await Promise.all([['Monthly', 1, 1500], ['Quarterly', 3, 4000], ['Half Yearly', 6, 7000], ['Yearly', 12, 12000]].map(([n, m, p]) =>
-    one<any>('INSERT INTO plans (name, duration_months, price) VALUES ($1,$2,$3) RETURNING *', [n, m, p])));
+    one<any>('INSERT INTO plans (name, duration_months, price, slot_ids) VALUES ($1,$2,$3,$4) RETURNING *', [n, m, p, n === 'Monthly' ? [slots[0]!.id, slots[2]!.id] : []])));
   const pkg = await one<any>(`INSERT INTO pt_packages (name, sessions, validity_days, price) VALUES ('12 sessions in 1 month',12,30,9000) RETURNING *`);
   await q(`INSERT INTO pt_packages (name, sessions, validity_days, price) VALUES ('24 sessions in 2 months',24,60,16000)`);
 
@@ -25,7 +39,7 @@ async function main() {
     one<any>(`INSERT INTO staff (name, phone, role_title, is_trainer, specialization, experience_years, base_salary, pt_commission_pct, joined_on) VALUES ($1,$2,'Trainer',true,$3,$4,$5,$6,$7) RETURNING *`, [n, phone(900 + i), sp, 5 + i, sal, pct, dayOffset(-300)])));
   const desk = await one<any>(`INSERT INTO staff (name, phone, role_title, is_trainer, base_salary, joined_on) VALUES ('Sunita More',$1,'Receptionist',false,15000,$2) RETURNING *`, [phone(950), dayOffset(-300)]);
 
-  const device = (await one<any>(`INSERT INTO biometric_devices (name, serial_number, location) VALUES ('Main entrance','DEMO12345','Reception') RETURNING *`))!;
+  const device = (await one<any>(`INSERT INTO biometric_devices (name, serial_number, location) VALUES ('Main entrance',$1,'Reception') RETURNING *`, [`DEMO${Date.now().toString(36).toUpperCase()}`]))!; // serial numbers are unique across all gyms
 
   const members: any[] = [];
   for (let i = 0; i < 36; i++) {
@@ -49,7 +63,7 @@ async function main() {
       const partly = i % 6 === 2;
       const total = p.price;
       await sellMembership(db, {
-        member_id: members[i].id, plan_id: p.id, start_date: start,
+        member_id: members[i].id, plan_id: p.id, slot_id: p.slot_ids.length ? p.slot_ids[i % p.slot_ids.length] : slots[i % 3]!.id, start_date: start,
         payment: { amount: partly ? Math.round(total / 2) : total, method: pick(['cash', 'upi', 'upi', 'card'], i), paid_on: start > dayOffset(0) ? dayOffset(0) : start },
       });
     }
@@ -103,8 +117,6 @@ async function main() {
       [n, phone(500 + i), st, src, pick(['Weight loss', 'Yearly plan', 'Personal training'], i), desk!.id, f === null ? null : dayOffset(f), st === 'lost' ? 'Too expensive' : null]);
   }
 
-  console.log('Sample data added.');
-  await pool().end();
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

@@ -1,8 +1,8 @@
 'use client';
 import Link from 'next/link';
 import { ReactNode, useEffect, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, Info, Loader2, Search, X } from 'lucide-react';
-import { api } from '@/lib/client';
+import { AlertCircle, Camera, CheckCircle2, ImagePlus, Info, Loader2, Search, X } from 'lucide-react';
+import { api, resizeImage } from '@/lib/client';
 
 /* ---------- Basics ---------- */
 
@@ -55,9 +55,38 @@ export function StatusBadge({ status }: { status: string }) {
   return <Badge tone={tone}>{label}</Badge>;
 }
 
-export function Avatar({ name, size = 36 }: { name: string; size?: number }) {
+export function Avatar({ name, size = 36, src }: { name: string; size?: number; src?: string | null }) {
   const initials = name.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+  // eslint-disable-next-line @next/next/no-img-element
+  if (src) return <img src={src} alt="" width={size} height={size} style={{ width: size, height: size }} className="shrink-0 rounded-full object-cover bg-canvas" />;
   return <span style={{ width: size, height: size, fontSize: size * 0.36 }} className="inline-flex shrink-0 items-center justify-center rounded-full bg-brand-soft text-brand-dark font-semibold">{initials}</span>;
+}
+
+/** Take a photo with the phone or laptop camera, or choose one. Value: data URL (new), null (removed) or undefined (unchanged). */
+export function PhotoInput({ value, current, name, onChange }: { value: string | null | undefined; current?: string | null; name?: string; onChange: (v: string | null) => void }) {
+  const [err, setErr] = useState<string | null>(null);
+  const camera = useRef<HTMLInputElement>(null);
+  const files = useRef<HTMLInputElement>(null);
+  const shown = value === undefined ? current : value;
+  const pick = async (f: File | undefined) => {
+    if (!f) return;
+    setErr(null);
+    try { onChange(await resizeImage(f)); } catch (e: any) { setErr(e.message); }
+  };
+  return (
+    <div className="flex items-center gap-3">
+      <Avatar name={name || '?'} src={shown} size={64} />
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" onClick={() => camera.current?.click()}><Camera /> Take photo</Button>
+        <Button size="sm" onClick={() => files.current?.click()}><ImagePlus /> Choose photo</Button>
+        {shown && <Button size="sm" variant="ghost" onClick={() => onChange(null)}>Remove</Button>}
+        {err && <span className="w-full text-rose text-[13px]">{err}</span>}
+      </div>
+      {/* capture opens the camera directly on phones; desktops show the file picker */}
+      <input ref={camera} type="file" accept="image/*" capture="user" className="hidden" onChange={(e) => { pick(e.target.files?.[0]); e.target.value = ''; }} />
+      <input ref={files} type="file" accept="image/*" className="hidden" onChange={(e) => { pick(e.target.files?.[0]); e.target.value = ''; }} />
+    </div>
+  );
 }
 
 export function PageHeader({ title, help, children }: { title: string; help: string; children?: ReactNode }) {
@@ -193,12 +222,17 @@ export function Modal({ title, subtitle, onClose, children, wide }: { title: str
 /* ---------- Data-driven forms ---------- */
 
 export type Opt = { value: string | number; label: string };
+type Dyn<T> = T | ((v: any) => T);
 export type Field = {
   name: string; label: string;
-  type?: 'text' | 'number' | 'date' | 'datetime-local' | 'tel' | 'email' | 'password' | 'select' | 'textarea' | 'checkbox' | 'member' | 'section';
-  options?: Opt[]; required?: boolean; help?: string; placeholder?: string; full?: boolean; min?: number; step?: string;
+  /** checks = several checkboxes (value is a list), choice = buttons to pick one, photo = camera or file */
+  type?: 'text' | 'number' | 'date' | 'datetime-local' | 'time' | 'tel' | 'email' | 'password' | 'select' | 'textarea' | 'checkbox' | 'member' | 'section' | 'checks' | 'choice' | 'photo';
+  options?: Dyn<Opt[]>; required?: Dyn<boolean>; help?: Dyn<string | undefined>; placeholder?: string; full?: boolean; min?: number; step?: string;
   show?: (v: any) => boolean;
+  /** For photo fields: the URL of the photo already saved. */
+  current?: (v: any) => string | null;
 };
+const dyn = <T,>(x: Dyn<T>, v: any): T => (typeof x === 'function' ? (x as (v: any) => T)(v) : x);
 
 export function MemberPicker({ value, onChange, required, initialName }: { value: any; onChange: (id: any, m?: any) => void; required?: boolean; initialName?: string }) {
   const [term, setTerm] = useState(initialName ?? '');
@@ -232,17 +266,46 @@ export function MemberPicker({ value, onChange, required, initialName }: { value
   );
 }
 
-function FieldInput({ f, v, set }: { f: Field; v: any; set: (val: any) => void }) {
-  const common = { id: f.name, required: f.required, placeholder: f.placeholder };
+function FieldInput({ f, v, set, values }: { f: Field; v: any; set: (val: any) => void; values: any }) {
+  const required = dyn(f.required ?? false, values);
+  const options = dyn(f.options ?? [], values);
+  const common = { id: f.name, required, placeholder: f.placeholder };
   if (f.type === 'select') return (
     <select {...common} className="input" value={v ?? ''} onChange={(e) => set(e.target.value)}>
-      {!f.required && <option value="">Not selected</option>}
-      {f.required && (v === '' || v === undefined || v === null) && <option value="">Choose…</option>}
-      {f.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      {!required && <option value="">Not selected</option>}
+      {required && (v === '' || v === undefined || v === null) && <option value="">Choose…</option>}
+      {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
   );
+  if (f.type === 'checks') {
+    const list: string[] = (v ?? []).map(String);
+    if (!options.length) return <p className="text-muted text-[13px]">{f.placeholder ?? 'Nothing to choose yet.'}</p>;
+    return (
+      <div className="flex flex-wrap gap-2">
+        {options.map((o) => {
+          const on = list.includes(String(o.value));
+          return (
+            <label key={o.value} className={`inline-flex items-center gap-2 rounded-lg border px-3 h-9 cursor-pointer ${on ? 'border-brand bg-brand-soft text-brand-dark' : 'border-line text-ink'}`}>
+              <input type="checkbox" className="size-4 accent-[var(--color-brand)]" checked={on}
+                onChange={(e) => set(e.target.checked ? [...list, String(o.value)] : list.filter((x) => x !== String(o.value)))} />
+              {o.label}
+            </label>
+          );
+        })}
+      </div>
+    );
+  }
+  if (f.type === 'choice') return (
+    <div role="radiogroup" aria-label={f.label} className="inline-flex flex-wrap gap-1 rounded-lg bg-canvas p-1">
+      {options.map((o) => (
+        <button type="button" role="radio" aria-checked={String(v) === String(o.value)} key={o.value} onClick={() => set(o.value)}
+          className={`h-9 px-3.5 rounded-md font-medium ${String(v) === String(o.value) ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink'}`}>{o.label}</button>
+      ))}
+    </div>
+  );
+  if (f.type === 'photo') return <PhotoInput value={v} current={f.current?.(values)} name={values.name} onChange={set} />;
   if (f.type === 'textarea') return <textarea {...common} rows={3} className="input" value={v ?? ''} onChange={(e) => set(e.target.value)} />;
-  if (f.type === 'member') return <MemberPicker value={v} required={f.required} onChange={(id) => set(id)} />;
+  if (f.type === 'member') return <MemberPicker value={v} required={required} onChange={(id) => set(id)} />;
   return <input {...common} className="input" type={f.type ?? 'text'} min={f.min} step={f.step ?? (f.type === 'number' ? 'any' : undefined)} value={v ?? ''} onChange={(e) => set(e.target.value)} />;
 }
 
@@ -254,14 +317,16 @@ export function FormFields({ fields, values, set }: { fields: Field[]; values: a
         if (f.type === 'checkbox') return (
           <label key={f.name} className="sm:col-span-2 flex items-start gap-2.5 py-1 cursor-pointer">
             <input type="checkbox" className="mt-0.5 size-4 accent-[var(--color-brand)]" checked={!!values[f.name]} onChange={(e) => set(f.name, e.target.checked)} />
-            <span><span className="text-ink">{f.label}</span>{f.help && <span className="block text-muted text-[13px]">{f.help}</span>}</span>
+            <span><span className="text-ink">{f.label}</span>{dyn(f.help, values) && <span className="block text-muted text-[13px]">{dyn(f.help, values)}</span>}</span>
           </label>
         );
+        const help = dyn(f.help, values);
+        const wide = f.full || ['textarea', 'member', 'checks', 'choice', 'photo'].includes(f.type ?? '');
         return (
-          <div key={f.name} className={f.full || f.type === 'textarea' || f.type === 'member' ? 'sm:col-span-2' : ''}>
-            <label htmlFor={f.name} className="block text-[13px] font-medium text-ink mb-1">{f.label}{f.required && <span className="text-rose"> *</span>}</label>
-            <FieldInput f={f} v={values[f.name]} set={(val) => set(f.name, val)} />
-            {f.help && <p className="text-muted text-xs mt-1">{f.help}</p>}
+          <div key={f.name} className={wide ? 'sm:col-span-2' : ''}>
+            <label htmlFor={f.name} className="block text-[13px] font-medium text-ink mb-1">{f.label}{dyn(f.required ?? false, values) && <span className="text-rose"> *</span>}</label>
+            <FieldInput f={f} v={values[f.name]} set={(val) => set(f.name, val)} values={values} />
+            {help && <p className="text-muted text-xs mt-1">{help}</p>}
           </div>
         );
       })}
@@ -318,11 +383,63 @@ export function Confirm({ title, text, confirmLabel = 'Yes, continue', danger, o
 }
 
 export const METHODS: Opt[] = [{ value: 'cash', label: 'Cash' }, { value: 'upi', label: 'UPI' }, { value: 'card', label: 'Card' }, { value: 'bank', label: 'Bank transfer' }];
+export const ONLINE_METHODS: Opt[] = METHODS.filter((m) => m.value !== 'cash');
+/** Paid-by choices, including part cash and part online on the same bill. */
+export const PAY_OPTIONS: Opt[] = [...METHODS, { value: 'mixed', label: 'Cash + online (split)' }];
+
+const mixed = (v: any) => v.pay_method === 'mixed';
+const rupees = (n: number) => '₹' + new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(n);
+export const onlinePart = (v: any) => Math.max(0, Math.round(((Number(v.pay_amount) || 0) - (Number(v.pay_cash) || 0)) * 100) / 100);
 
 export const paymentFields: Field[] = [
-  { name: 'pay_amount', label: 'Amount received now (₹)', type: 'number', min: 0, help: 'Enter 0 to collect later. The balance shows as due.' },
-  { name: 'pay_method', label: 'Paid by', type: 'select', options: METHODS, required: true },
+  { name: 'pay_amount', label: 'Amount received now (₹)', type: 'number', min: 0, help: (v) => (mixed(v) ? 'The total of cash and online together.' : 'Enter 0 to collect later. The balance shows as due.') },
+  { name: 'pay_method', label: 'Paid by', type: 'select', options: PAY_OPTIONS, required: true },
+  { name: 'pay_cash', label: 'Of that, cash (₹)', type: 'number', min: 0, show: mixed, required: true, help: (v) => `Online part: ${rupees(onlinePart(v))}` },
+  { name: 'pay_online_method', label: 'Online part paid by', type: 'select', options: ONLINE_METHODS, required: true, show: mixed },
   { name: 'pay_reference', label: 'UPI / card reference', placeholder: 'Optional', full: true, show: (v) => v.pay_method && v.pay_method !== 'cash' },
 ];
 
-export const toPayment = (v: any) => Number(v.pay_amount) > 0 ? { amount: Number(v.pay_amount), method: v.pay_method || 'cash', reference: v.pay_reference || null } : null;
+/** The payment(s) to send with a sale. A split payment becomes two payments: cash, and the online part. */
+export const toPayment = (v: any) => {
+  const total = Number(v.pay_amount) || 0;
+  if (total <= 0) return null;
+  if (!mixed(v)) return { amount: total, method: v.pay_method || 'cash', reference: v.pay_reference || null };
+  const cash = Number(v.pay_cash) || 0;
+  if (cash > total) throw new Error('The cash part cannot be more than the total received');
+  const online = onlinePart(v);
+  return [
+    ...(cash > 0 ? [{ amount: cash, method: 'cash', reference: null }] : []),
+    ...(online > 0 ? [{ amount: online, method: v.pay_online_method || 'upi', reference: v.pay_reference || null }] : []),
+  ];
+};
+
+/** Keeps the split sensible: picking "split" defaults the online part to UPI. */
+export const syncMixed = (name: string, v: any) => (name === 'pay_method' && v.pay_method === 'mixed' && !v.pay_online_method ? { pay_online_method: 'upi' } : {});
+
+/** Paid-by and split inputs for the hand-built bill and shop screens. */
+export function PayInputs({ pay, setPay, amount }: { pay: any; setPay: (p: any) => void; amount: any }) {
+  const v = { ...pay, pay_amount: amount };
+  return (
+    <>
+      <div><label className="block text-[13px] font-medium text-ink mb-1" htmlFor="pm">Paid by</label>
+        <select id="pm" className="input" value={pay.pay_method} onChange={(e) => setPay({ ...pay, pay_method: e.target.value, ...syncMixed('pay_method', { ...pay, pay_method: e.target.value }) })}>
+          {PAY_OPTIONS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+        </select>
+      </div>
+      {mixed(pay) && (
+        <>
+          <div><label className="block text-[13px] font-medium text-ink mb-1" htmlFor="pc">Of that, cash (₹)</label>
+            <input id="pc" className="input" type="number" min={0} step="any" value={pay.pay_cash ?? ''} onChange={(e) => setPay({ ...pay, pay_cash: e.target.value })} />
+            <p className="text-muted text-xs mt-1">Online part: {rupees(onlinePart(v))}</p>
+          </div>
+          <div><label className="block text-[13px] font-medium text-ink mb-1" htmlFor="po">Online part paid by</label>
+            <select id="po" className="input" value={pay.pay_online_method ?? 'upi'} onChange={(e) => setPay({ ...pay, pay_online_method: e.target.value })}>
+              {ONLINE_METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
