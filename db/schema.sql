@@ -257,6 +257,61 @@ CREATE TABLE IF NOT EXISTS stock_movements (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- Who the gym buys stock from. Shared by all branches of a gym.
+CREATE TABLE IF NOT EXISTS suppliers (
+  id serial PRIMARY KEY,
+  name text NOT NULL,
+  phone text,
+  gstin text,
+  address text,
+  notes text,
+  active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- A supplier's bill: stock that came in, what it cost, and how much is still owed.
+CREATE TABLE IF NOT EXISTS purchases (
+  id serial PRIMARY KEY,
+  supplier_id int NOT NULL REFERENCES suppliers(id),
+  bill_no text,
+  purchase_date date NOT NULL DEFAULT gym_today(),
+  total numeric(12,2) NOT NULL DEFAULT 0,
+  paid numeric(12,2) NOT NULL DEFAULT 0,
+  balance numeric(12,2) GENERATED ALWAYS AS (total - paid) STORED,
+  status text NOT NULL DEFAULT 'unpaid',  -- unpaid, partial, paid, cancelled
+  notes text,
+  created_by int REFERENCES users(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS purchases_supplier_idx ON purchases(supplier_id);
+CREATE INDEX IF NOT EXISTS purchases_date_idx ON purchases(purchase_date);
+
+CREATE TABLE IF NOT EXISTS purchase_items (
+  id serial PRIMARY KEY,
+  purchase_id int NOT NULL REFERENCES purchases(id) ON DELETE CASCADE,
+  product_id int NOT NULL REFERENCES products(id),
+  qty int NOT NULL CHECK (qty > 0),
+  unit_cost numeric(12,2) NOT NULL DEFAULT 0,
+  amount numeric(12,2) NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS purchase_items_purchase_idx ON purchase_items(purchase_id);
+
+-- Money paid to a supplier against one of their bills.
+CREATE TABLE IF NOT EXISTS supplier_payments (
+  id serial PRIMARY KEY,
+  purchase_id int NOT NULL REFERENCES purchases(id) ON DELETE CASCADE,
+  supplier_id int NOT NULL REFERENCES suppliers(id),
+  amount numeric(12,2) NOT NULL CHECK (amount > 0),
+  method text NOT NULL DEFAULT 'cash',
+  reference text,
+  paid_on date NOT NULL DEFAULT gym_today(),
+  voided boolean NOT NULL DEFAULT false,
+  paid_by int REFERENCES users(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS supplier_payments_purchase_idx ON supplier_payments(purchase_id);
+CREATE INDEX IF NOT EXISTS supplier_payments_supplier_idx ON supplier_payments(supplier_id);
+
 CREATE TABLE IF NOT EXISTS biometric_devices (
   id serial PRIMARY KEY,
   name text NOT NULL,
@@ -520,14 +575,19 @@ ALTER TABLE plans ADD COLUMN IF NOT EXISTS slot_ids int[] NOT NULL DEFAULT '{}';
 ALTER TABLE memberships ADD COLUMN IF NOT EXISTS slot_id int REFERENCES slots(id) ON DELETE SET NULL;
 ALTER TABLE memberships ADD COLUMN IF NOT EXISTS slot_name text;
 ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_welcome boolean NOT NULL DEFAULT true;
+-- A supplier payment also shows in Expenses, so profit in Reports counts it.
+ALTER TABLE expenses ADD COLUMN IF NOT EXISTS supplier_payment_id int REFERENCES supplier_payments(id) ON DELETE CASCADE;
+CREATE UNIQUE INDEX IF NOT EXISTS expenses_supplier_payment ON expenses (supplier_payment_id);
+ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS purchase_id int REFERENCES purchases(id) ON DELETE SET NULL;
 
 -- Tables that belong to a gym as a whole, and tables that belong to one branch.
 CREATE OR REPLACE FUNCTION gp_gym_tables() RETURNS text[] LANGUAGE sql IMMUTABLE AS $$ SELECT ARRAY[
-  'settings','whatsapp_settings','message_templates','invoice_counters','gym_counters','photos','users','branches'] $$;
+  'settings','whatsapp_settings','message_templates','invoice_counters','gym_counters','photos','users','branches','suppliers'] $$;
 CREATE OR REPLACE FUNCTION gp_branch_tables() RETURNS text[] LANGUAGE sql IMMUTABLE AS $$ SELECT ARRAY[
   'staff','leads','lead_activities','members','plans','slots','invoices','invoice_items','payments','memberships','membership_freezes',
   'pt_packages','pt_subscriptions','pt_sessions','products','stock_movements','biometric_devices','biometric_enrollments',
-  'biometric_punches','attendance','payroll_runs','payroll_items','salary_advances','expenses','messages','campaigns','device_commands'] $$;
+  'biometric_punches','attendance','payroll_runs','payroll_items','salary_advances','expenses','messages','campaigns','device_commands',
+  'purchases','purchase_items','supplier_payments'] $$;
 
 DO $$
 DECLARE t text;
@@ -659,7 +719,8 @@ BEGIN
     ('stock_movements', 'products,product_id'), ('biometric_devices', ''), ('biometric_enrollments', 'members,member_id,staff,staff_id'),
     ('biometric_punches', 'biometric_devices,device_id'), ('attendance', 'members,member_id,staff,staff_id'), ('payroll_runs', ''),
     ('payroll_items', 'payroll_runs,run_id'), ('salary_advances', 'staff,staff_id'), ('expenses', ''),
-    ('messages', 'members,member_id,leads,lead_id,campaigns,campaign_id'), ('campaigns', ''), ('device_commands', 'biometric_devices,device_id')
+    ('messages', 'members,member_id,leads,lead_id,campaigns,campaign_id'), ('campaigns', ''), ('device_commands', 'biometric_devices,device_id'),
+    ('purchases', ''), ('purchase_items', 'purchases,purchase_id'), ('supplier_payments', 'purchases,purchase_id')
   ) AS x(tbl, parents) LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS a_fill_branch ON %I', r.tbl);
     EXECUTE format('CREATE TRIGGER a_fill_branch BEFORE INSERT ON %I FOR EACH ROW EXECUTE FUNCTION fill_branch(%s)', r.tbl,
@@ -683,7 +744,7 @@ BEGIN
       USING (gym_id = app_gym() AND (app_branch() IS NULL OR branch_id = app_branch()))
       WITH CHECK (gym_id = app_gym() AND (app_branch() IS NULL OR branch_id = app_branch()) AND branch_in_gym(branch_id))$p$, t);
   END LOOP;
-  FOREACH t IN ARRAY ARRAY['settings','whatsapp_settings','message_templates','invoice_counters','gym_counters','photos'] LOOP
+  FOREACH t IN ARRAY ARRAY['settings','whatsapp_settings','message_templates','invoice_counters','gym_counters','photos','suppliers'] LOOP
     EXECUTE format('CREATE POLICY tenant ON %I USING (gym_id = app_gym()) WITH CHECK (gym_id = app_gym())', t);
   END LOOP;
 END $$;

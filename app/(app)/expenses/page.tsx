@@ -42,11 +42,11 @@ function Inner() {
       </div>
       <div className="grid lg:grid-cols-3 gap-4">
         <Card pad={false} className="lg:col-span-2">
-          <Table rows={data.rows} onRow={setEdit} empty={<Empty icon={Wallet} title="No expenses this month" action={<Button variant="primary" onClick={() => setEdit({})}>Add expense</Button>} />}
+          <Table rows={data.rows} onRow={(r) => (r.supplier_payment_id ? toast('This is a payment to a supplier. Change it from Shop & Stock → Purchases.', 'error') : setEdit(r))} empty={<Empty icon={Wallet} title="No expenses this month" action={<Button variant="primary" onClick={() => setEdit({})}>Add expense</Button>} />}
             cols={[
               { key: 'expense_date', label: 'Date', render: (r) => fmtDate(r.expense_date) },
               { key: 'category', label: 'Category', render: (r) => <span className="font-medium text-ink">{r.category}</span> },
-              { key: 'description', label: 'For' },
+              { key: 'description', label: 'For', render: (r) => <span>{r.description}{r.vendor && r.supplier_payment_id ? <span className="text-muted"> · {r.vendor}</span> : null}</span> },
               { key: 'amount', label: 'Amount', align: 'right', render: (r) => inr(r.amount) },
             ]} />
         </Card>

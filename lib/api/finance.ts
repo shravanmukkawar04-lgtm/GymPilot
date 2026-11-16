@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { insert, one, q, tx, update } from '../db';
-import { notFound, parse, route } from './router';
+import { bad, notFound, parse, route } from './router';
 import * as s from './schemas';
 import { addPayment, addPayments, cancelInvoice, createInvoice, getSettings, voidPayment } from '../services/billing';
 
@@ -83,8 +83,17 @@ route('POST', '/expenses', 'expenses', async ({ body, user }) => {
   const v = parse(expenseSchema, body);
   return insert('expenses', { ...v, expense_date: v.expense_date ?? undefined, created_by: user.id });
 });
+/** Expenses made by paying a supplier are changed from the supplier's bill, so the two never disagree. */
+async function notSupplierPayment(id: string) {
+  const e = await one<any>('SELECT supplier_payment_id FROM expenses WHERE id=$1', [id]);
+  if (e?.supplier_payment_id) throw bad('This expense is a payment to a supplier. Change it from Shop & Stock → Purchases instead.');
+}
 route('PUT', '/expenses/:id', 'expenses', async ({ params, body }) => {
   const v = parse(expenseSchema, body);
+  await notSupplierPayment(params.id);
   return update('expenses', params.id, { ...v, expense_date: v.expense_date ?? undefined });
 });
-route('DELETE', '/expenses/:id', 'expenses', async ({ params }) => { await q('DELETE FROM expenses WHERE id=$1', [params.id]); });
+route('DELETE', '/expenses/:id', 'expenses', async ({ params }) => {
+  await notSupplierPayment(params.id);
+  await q('DELETE FROM expenses WHERE id=$1', [params.id]);
+});
