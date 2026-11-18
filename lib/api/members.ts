@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { Db, insert, one, q, tenant, tx, update } from '../db';
-import { bad, notFound, parse, route } from './router';
+import { ApiError, bad, notFound, parse, route } from './router';
 import * as s from './schemas';
 import { createInvoice, getSettings, pickSlot, sellMembership, slotLabel } from '../services/billing';
 import { setBiometricId } from '../services/attendance';
@@ -55,6 +55,9 @@ route('GET', '/members', 'members', async ({ query }) => {
   }
   const slot = Number(query.get('slot_id'));
   if (slot) { params.push(slot); where.push(`slot_id = $${params.length}`); }
+  // Members whose current membership is on this plan.
+  const plan = Number(query.get('plan_id'));
+  if (plan) { params.push(plan); where.push(`membership_id IN (SELECT id FROM memberships WHERE plan_id = $${params.length})`); }
   const page = Math.max(1, Number(query.get('page')) || 1);
   const limit = Math.min(200, Number(query.get('limit')) || 50);
   const clause = where.join(' AND ');
@@ -211,17 +214,29 @@ route('POST', '/members/:id/membership', 'members', async ({ params, body, user 
   return tx((db) => sellMembership(db, { member_id: Number(params.id), ...sale, user_id: user.id }));
 });
 
+/**
+ * Puts a membership on hold between two dates (both days count). The number of days is worked out from the dates
+ * and added to the end of the plan, so the member loses nothing. `days` instead of `end_date` still works for older callers.
+ */
 route('POST', '/memberships/:id/freeze', 'members', async ({ params, body }) => {
-  const { start_date, days, reason } = parse(z.object({ start_date: s.reqDate, days: z.coerce.number().int().min(1).max(365), reason: s.text }), body);
+  const v = parse(z.object({
+    start_date: s.reqDate, end_date: s.date, days: z.coerce.number().int().min(1).max(365).nullish(), reason: s.text,
+  }), body);
+  if (!v.end_date && !v.days) throw bad('Choose the date the hold ends');
   return tx(async (db) => {
     const ms = await one<any>(`SELECT * FROM memberships WHERE id=$1 AND status='active' FOR UPDATE`, [params.id], db);
     if (!ms) throw notFound('Membership not found');
-    if (start_date > ms.end_date) throw bad('The freeze must start before the membership ends');
-    const overlap = await one(`SELECT 1 FROM membership_freezes WHERE membership_id=$1 AND end_date >= $2`, [ms.id, start_date], db);
-    if (overlap) throw bad('This membership already has a freeze in that period');
-    await db.query(`INSERT INTO membership_freezes (membership_id, start_date, end_date, reason) VALUES ($1,$2::date,$2::date + $3::int - 1,$4)`, [ms.id, start_date, days, reason]);
-    // Frozen days are added back so the member loses nothing.
-    return one(`UPDATE memberships SET end_date = end_date + $2::int WHERE id=$1 RETURNING *`, [ms.id, days], db);
+    const { end_date, days } = (await one<{ end_date: string; days: number }>(
+      `SELECT COALESCE($2::date, $1::date + $3::int - 1) AS end_date, COALESCE($2::date - $1::date + 1, $3::int) AS days`, [v.start_date, v.end_date ?? null, v.days ?? null], db))!;
+    if (days < 1) throw bad('The hold cannot end before it starts');
+    if (days > 365) throw bad('A hold can be at most 365 days');
+    if (v.start_date < ms.start_date) throw bad('The hold cannot start before the plan starts');
+    if (v.start_date > ms.end_date) throw bad('The hold must start before the plan ends');
+    const overlap = await one(`SELECT 1 FROM membership_freezes WHERE membership_id=$1 AND start_date <= $3::date AND end_date >= $2::date`, [ms.id, v.start_date, end_date], db);
+    if (overlap) throw bad('This membership already has a hold in those dates');
+    await db.query(`INSERT INTO membership_freezes (membership_id, start_date, end_date, reason) VALUES ($1,$2::date,$3::date,$4)`, [ms.id, v.start_date, end_date, v.reason]);
+    const updated = await one<any>(`UPDATE memberships SET end_date = end_date + $2::int WHERE id=$1 RETURNING *`, [ms.id, days], db);
+    return { ...updated, frozen_days: days };
   });
 });
 
@@ -255,6 +270,20 @@ route('PUT', '/plans/:id', 'members', async ({ params, body }) => {
   if (!plan) throw notFound('Plan not found');
   await checkSlots(v.slot_ids, plan.branch_id);
   return update('plans', params.id, v);
+});
+
+/**
+ * Deletes a plan nobody is on any more. Members keep their history: each membership stores the plan's name,
+ * so only the link to the plan is removed. A plan with running memberships is refused, because the members would be left
+ * on a plan that no longer exists; hide it instead ("Available for sale" off) and delete it once they have finished.
+ */
+route('DELETE', '/plans/:id', 'members', async ({ params }) => {
+  const plan = await one<any>('SELECT id, name FROM plans WHERE id=$1', [params.id]);
+  if (!plan) throw notFound('Plan not found');
+  const { n } = (await one<{ n: number }>(
+    `SELECT count(*) n FROM memberships WHERE plan_id=$1 AND status='active' AND end_date >= gym_today()`, [plan.id]))!;
+  if (n > 0) throw new ApiError(409, `${n} member${n > 1 ? 's are' : ' is'} still on ${plan.name}. Turn off "Available for sale" to stop selling it, and delete it once they have finished.`);
+  await q('DELETE FROM plans WHERE id=$1', [plan.id]);
 });
 
 route('GET', '/slots', 'any', async ({ query }) => {

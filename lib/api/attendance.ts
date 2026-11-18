@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { asTenant, insert, one, q, tx, update } from '../db';
 import { ApiError, bad, parse, route } from './router';
 import * as s from './schemas';
-import { linkEnrollment, manualCheck, processPunch, startEnrollment, syncAllToDevice } from '../services/attendance';
+import { linkEnrollment, manualCheck, markPresent, processPunch, startEnrollment, syncAllToDevice } from '../services/attendance';
 import { networkInterfaces } from 'node:os';
 
 const deviceSchema = z.object({ name: s.reqText, serial_number: s.reqText, location: s.text, active: s.bool });
@@ -35,6 +35,60 @@ route('GET', '/attendance/history', 'attendance', async ({ query }) => {
 route('POST', '/attendance/manual', 'attendance', async ({ body }) => {
   const v = parse(z.object({ member_id: s.idOpt, staff_id: s.idOpt }), body);
   return tx((db) => manualCheck(db, { member_id: v.member_id ?? null, staff_id: v.staff_id ?? null }));
+});
+
+/* ---------- Mark a whole batch present ---------- */
+
+/** Batches (time slots) with how many members are in each, and the plans, for the "Mark by batch" screen. */
+route('GET', '/attendance/batch-options', 'attendance', async () => {
+  const [slots, plans, none] = await Promise.all([
+    q(`SELECT sl.id, sl.name, sl.start_time, sl.end_time, b.name branch_name,
+         (SELECT count(*) FROM member_overview o WHERE o.slot_id=sl.id AND o.status='active' AND NOT o.archived) members
+       FROM slots sl JOIN branches b ON b.id=sl.branch_id WHERE sl.active ORDER BY sl.start_time, sl.id`),
+    q(`SELECT id, name FROM plans WHERE active OR EXISTS (SELECT 1 FROM memberships m WHERE m.plan_id=plans.id AND m.status='active' AND m.end_date >= gym_today()) ORDER BY name`),
+    one<{ n: number }>(`SELECT count(*) n FROM member_overview WHERE slot_id IS NULL AND status='active' AND NOT archived`),
+  ]);
+  return { slots, plans, no_batch: none!.n };
+});
+
+/**
+ * Members in a batch (slot_id, or 'none' for members without a batch), optionally only one plan,
+ * and whether each is already marked today. Without include_all, only members with a valid plan.
+ */
+route('GET', '/attendance/by-batch', 'attendance', async ({ query }) => {
+  const raw = query.get('slot_id');
+  const noBatch = raw === 'none';
+  const slot = Number(raw);
+  if (!noBatch && !slot) throw bad('Choose a batch');
+  const plan = Number(query.get('plan_id')) || null;
+  const all = query.get('include_all') === '1';
+  const params: unknown[] = [];
+  const where = ['NOT o.archived'];
+  if (noBatch) where.push('o.slot_id IS NULL');
+  else { params.push(slot); where.push(`o.slot_id=$${params.length}`); }
+  if (plan) { params.push(plan); where.push(`o.membership_id IN (SELECT id FROM memberships WHERE plan_id=$${params.length})`); }
+  if (!all) where.push(`o.status='active'`);
+  return q(`SELECT o.id, o.name, o.member_code, o.phone, o.status, o.plan_name, o.slot_name, o.valid_until, o.photo_v, a.check_in, a.check_out
+    FROM member_overview o
+    LEFT JOIN attendance a ON a.member_id=o.id AND a.day=gym_today()
+    WHERE ${where.join(' AND ')}
+    ORDER BY o.name`, params);
+});
+
+/** Marks every ticked member present today. Members already marked are skipped, never checked out. */
+route('POST', '/attendance/manual-batch', 'attendance', async ({ body }) => {
+  const v = parse(z.object({ member_ids: z.array(s.id).min(1, 'Tick at least one member').max(300, 'Mark at most 300 members at a time') }), body);
+  return tx(async (db) => {
+    const ids = [...new Set(v.member_ids)];
+    const found = await q<{ id: number }>('SELECT id FROM members WHERE id = ANY($1) AND NOT archived ORDER BY id', [ids], db);
+    let marked = 0, already = 0, notValid = 0;
+    for (const m of found) {
+      const r = await markPresent(db, m.id);
+      if (r.result === 'already') already++;
+      else { marked++; if (!r.membershipOk) notValid++; }
+    }
+    return { marked, already, notValid, skipped: ids.length - found.length };
+  });
 });
 
 route('GET', '/attendance/devices', 'attendance', async () => q(`

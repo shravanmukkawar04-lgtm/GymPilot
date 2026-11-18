@@ -6,6 +6,7 @@ import { ArrowLeft, Fingerprint, MessageCircle, PauseCircle, Pencil, RefreshCw, 
 import { api, daysFromToday, fmtDate, fmtTime, inr, photoUrl, todayIST, toast, useApi, waLink } from '@/lib/client';
 import { Avatar, Badge, Button, Card, Confirm, Empty, ErrorNote, FormModal, Loading, StatusBadge, Table, Tabs } from '@/components/ui';
 import { MembershipSale } from '@/components/sales';
+import { FreezeModal } from '@/components/freeze';
 import { memberFieldsShared } from '@/components/member-fields';
 
 export default function MemberPage() {
@@ -152,10 +153,7 @@ export default function MemberPage() {
       {modal === 'upgrade' && <MembershipSale member={m} credit={credit} onClose={() => setModal(null)} onDone={reload} />}
       {modal === 'edit' && <FormModal wide title="Edit member" fields={memberFieldsShared} initial={{ ...m, photo: undefined }} onClose={() => setModal(null)}
         onSubmit={async (v) => { await api(`/members/${m.id}`, { method: 'PUT', body: v }); toast('Saved'); reload(); }} />}
-      {modal === 'freeze' && <FormModal title="Put membership on hold" subtitle="The end date moves forward by the same number of days, so nothing is lost."
-        fields={[{ name: 'start_date', label: 'Hold from', type: 'date', required: true }, { name: 'days', label: 'Number of days', type: 'number', min: 1, required: true }, { name: 'reason', label: 'Reason', full: true, placeholder: 'Travel, injury…' }]}
-        initial={{ start_date: todayIST() }} submitLabel="Put on hold" onClose={() => setModal(null)}
-        onSubmit={async (v) => { await api(`/memberships/${m.membership_id}/freeze`, { body: v }); toast('Membership put on hold'); reload(); }} />}
+      {modal === 'freeze' && <FreezeModal member={m} onClose={() => setModal(null)} onDone={reload} />}
       {modal === 'archive' && <Confirm danger title={`Remove ${m.name}?`} text="They will disappear from your member list. Bills and history are kept for your records." confirmLabel="Remove member" onClose={() => setModal(null)}
         onConfirm={async () => { await api(`/members/${m.id}/archive`, { body: {} }); window.location.href = '/members'; }} />}
     </>

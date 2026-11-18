@@ -1,9 +1,10 @@
 'use client';
 import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Clock, Download, FileUp, Layers, Loader2, Plus, Users } from 'lucide-react';
+import { Clock, Download, FileUp, Layers, Loader2, PauseCircle, Plus, Trash2, Users } from 'lucide-react';
 import { api, daysFromToday, downloadCsv, fmtDate, inr, parseCsv, photoUrl, toast, useApi } from '@/lib/client';
-import { Avatar, Badge, Button, Card, Empty, ErrorNote, Field, FormModal, Loading, Modal, PageHeader, StatusBadge, Table, Tabs } from '@/components/ui';
+import { Avatar, Badge, Button, Card, Confirm, Empty, ErrorNote, Field, FormModal, Loading, Modal, PageHeader, StatusBadge, Table, Tabs } from '@/components/ui';
+import { FreezeModal } from '@/components/freeze';
 import { BillSummary, saleFields, slotField, slotLabel, syncPay, toSale } from '@/components/sales';
 import { memberFieldsShared as memberFields } from '@/components/member-fields';
 import { useShell } from '@/components/shell';
@@ -44,6 +45,7 @@ function PlansTab() {
   const { data, reload } = useApi<any[]>('/plans');
   const slots = useApi<any[]>('/slots');
   const [edit, setEdit] = useState<any>(null);
+  const [del, setDel] = useState<any>(null);
   if (!data || !slots.data) return <Loading />;
   const slotOpts = slots.data.filter((s) => s.active).map((s) => ({ value: s.id, label: slotLabel(s) }));
   const fields: Field[] = [
@@ -70,7 +72,14 @@ function PlansTab() {
             { key: 'active_members', label: 'Members now', align: 'right' },
             { key: 'price', label: 'Price', align: 'right', render: (r) => inr(r.price) },
             { key: 'active', label: 'Status', render: (r) => <Badge tone={r.active ? 'green' : 'gray'}>{r.active ? 'On sale' : 'Hidden'}</Badge> },
+            { key: 'del', label: '', align: 'right', render: (r) => <Button size="sm" variant="ghost" aria-label={`Delete ${r.name}`} onClick={(e: any) => { e.stopPropagation(); setDel(r); }}><Trash2 /></Button> },
           ]} />
+        {del && <Confirm danger title={`Delete ${del.name}?`}
+          text={del.active_members > 0
+            ? `${del.active_members} member${del.active_members > 1 ? 's are' : ' is'} still on this plan, so it cannot be deleted yet. Edit the plan and turn off “Available for sale” to stop selling it.`
+            : 'The plan is removed from your list. Members who had it keep their history, and old bills are not changed.'}
+          confirmLabel="Delete plan" onClose={() => setDel(null)}
+          onConfirm={async () => { await api(`/plans/${del.id}`, { method: 'DELETE' }); toast('Plan deleted'); reload(); }} />}
         {edit && <FormModal title={edit.id ? 'Edit plan' : 'Add plan'} fields={fields} initial={edit} onClose={() => setEdit(null)}
           onSubmit={async (v) => {
             await api(edit.id ? `/plans/${edit.id}` : '/plans', { method: edit.id ? 'PUT' : 'POST', body: { ...v, slot_ids: (v.slot_ids ?? []).map(Number) } });
@@ -261,6 +270,8 @@ function Inner() {
   const [tab, setTab] = useState(sp.get('tab') === 'plans' ? 'plans' : 'list');
   const [status, setStatus] = useState(sp.get('status') ?? '');
   const [slot, setSlot] = useState('');
+  const [plan, setPlan] = useState('');
+  const [hold, setHold] = useState<any>(null);
   const [q, setQ] = useState('');
   const [term, setTerm] = useState('');
   const [page, setPage] = useState(1);
@@ -268,8 +279,9 @@ function Inner() {
   const [importing, setImporting] = useState(false);
   useEffect(() => { const t = setTimeout(() => { setTerm(q); setPage(1); }, 250); return () => clearTimeout(t); }, [q]);
   useEffect(() => { if (sp.get('new') === '1') setAdding(true); }, [sp]);
-  const { data, error, reload } = useApi(`/members?status=${status}&slot_id=${slot}&q=${encodeURIComponent(term)}&page=${page}`);
+  const { data, error, reload } = useApi(`/members?status=${status}&slot_id=${slot}&plan_id=${plan}&q=${encodeURIComponent(term)}&page=${page}`);
   const slots = useApi<any[]>('/slots');
+  const plans = useApi<any[]>('/plans');
   const allBranches = shell?.branch_id === null;
   const needBranch = () => toast('Choose a branch at the top first. New members are added to one branch.', 'error');
 
@@ -284,9 +296,15 @@ function Inner() {
         <Card pad={false}>
           <div className="p-3 flex flex-wrap items-center gap-2 border-b border-line">
             <input className="input sm:max-w-xs" placeholder="Search name, phone or member ID" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search members" />
+            {!!plans.data?.length && (
+              <select className="input sm:!w-48" aria-label="Plan" value={plan} onChange={(e) => { setPlan(e.target.value); setPage(1); }}>
+                <option value="">All plans</option>
+                {plans.data.map((p) => <option key={p.id} value={p.id}>{p.name}{allBranches ? ` · ${p.branch_name}` : ''}{p.active ? '' : ' (hidden)'}</option>)}
+              </select>
+            )}
             {!!slots.data?.length && (
-              <select className="input sm:!w-48" aria-label="Time slot" value={slot} onChange={(e) => { setSlot(e.target.value); setPage(1); }}>
-                <option value="">All time slots</option>
+              <select className="input sm:!w-48" aria-label="Batch (time slot)" value={slot} onChange={(e) => { setSlot(e.target.value); setPage(1); }}>
+                <option value="">All batches</option>
                 {slots.data.map((s) => <option key={s.id} value={s.id}>{slotLabel(s)}</option>)}
               </select>
             )}
@@ -301,7 +319,7 @@ function Inner() {
           {error ? <div className="p-4"><ErrorNote message={error} retry={reload} /></div> : !data ? <Loading /> : (
             <>
               <Table rows={data.rows} onRow={(r) => router.push(`/members/${r.id}`)}
-                empty={<Empty icon={Users} title={term || status || slot ? 'No members match this filter' : 'No members yet'} text={term || status || slot ? 'Try another search or filter.' : 'Add your first member, or import everyone from your old software.'} action={!term && !status && !slot && !allBranches ? <Button variant="primary" onClick={() => setAdding(true)}>Add member</Button> : undefined} />}
+                empty={<Empty icon={Users} title={term || status || slot || plan ? 'No members match this filter' : 'No members yet'} text={term || status || slot || plan ? 'Try another search or filter.' : 'Add your first member, or import everyone from your old software.'} action={!term && !status && !slot && !plan && !allBranches ? <Button variant="primary" onClick={() => setAdding(true)}>Add member</Button> : undefined} />}
                 cols={[
                   { key: 'name', label: 'Member', render: (r) => <span className="flex items-center gap-2.5"><Avatar name={r.name} src={photoUrl('member', r.id, r.photo_v)} /><span><span className="block font-medium text-ink">{r.name}</span><span className="text-muted text-[13px]">{r.member_code} · {r.phone}</span></span></span> },
                   ...(allBranches ? [{ key: 'branch_name', label: 'Branch' }] : []),
@@ -310,6 +328,7 @@ function Inner() {
                   { key: 'status', label: 'Status', render: (r) => <StatusBadge status={r.status} /> },
                   { key: 'last_visit', label: 'Last visit', render: (r) => fmtDate(r.last_visit) },
                   { key: 'dues', label: 'Owes', align: 'right', render: (r) => r.dues > 0 ? <span className="text-rose font-medium">{inr(r.dues)}</span> : '—' },
+                  { key: 'hold', label: '', align: 'right', render: (r) => r.status === 'active' ? <Button size="sm" aria-label={`Put ${r.name} on hold`} onClick={(e: any) => { e.stopPropagation(); setHold(r); }}><PauseCircle /> Hold</Button> : null },
                 ]} />
               {data.total > data.limit && (
                 <div className="flex items-center justify-between p-3 border-t border-line">
@@ -325,6 +344,7 @@ function Inner() {
         </Card>
       )}
       {adding && !allBranches && <AddMember onClose={() => setAdding(false)} onDone={(id) => router.push(`/members/${id}`)} />}
+      {hold && <FreezeModal member={hold} onClose={() => setHold(null)} onDone={reload} />}
       {importing && <ImportMembers onClose={() => { setImporting(false); reload(); }} onDone={reload} />}
     </>
   );

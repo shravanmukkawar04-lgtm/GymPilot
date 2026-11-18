@@ -60,6 +60,17 @@ export async function manualCheck(db: Db, person: Person) {
   return applied;
 }
 
+/**
+ * Marks a member present for today without ever checking them out (unlike manualCheck, which toggles).
+ * Used for marking a whole batch at once: someone already marked is left alone.
+ */
+export async function markPresent(db: Db, memberId: number) {
+  const already = await one(`SELECT 1 FROM attendance WHERE member_id=$1 AND day=gym_today()`, [memberId], db);
+  if (already) return { result: 'already' as const, membershipOk: true };
+  const applied = await applyPunch(db, { member_id: memberId, staff_id: null }, new Date(), 'manual');
+  return { result: 'in' as const, membershipOk: applied.membershipOk };
+}
+
 /** After an unknown fingerprint number is linked to someone, replay its stored scans. */
 export async function linkEnrollment(db: Db, deviceUserId: string, person: Person) {
   // The enrollment takes the person's branch, and only that branch's machines' scans are replayed.

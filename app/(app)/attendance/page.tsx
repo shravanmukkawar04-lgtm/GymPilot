@@ -1,9 +1,10 @@
 'use client';
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Fingerprint, Plus, Search, Trash2 } from 'lucide-react';
+import { Fingerprint, Loader2, Plus, Search, Trash2, Users } from 'lucide-react';
 import { api, fmtDate, fmtDateTime, fmtTime, monthIST, todayIST, toast, useApi } from '@/lib/client';
 import { Avatar, Badge, Button, Card, Confirm, Empty, ErrorNote, FormModal, Loading, Modal, PageHeader, Stat, StatusBadge, Table, Tabs } from '@/components/ui';
+import { slotLabel } from '@/components/sales';
 
 function PersonSearch({ onPick }: { onPick: (p: any) => void }) {
   const [q, setQ] = useState('');
@@ -29,6 +30,93 @@ function PersonSearch({ onPick }: { onPick: (p: any) => void }) {
         {!rows.length && <li className="text-muted px-2 py-3">No one found</li>}
       </ul>
     </div>
+  );
+}
+
+/** Pick a batch (time slot), tick the members who came, and mark them all present in one go. A plan can narrow the list. */
+function BatchCheckin({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const opts = useApi<any>('/attendance/batch-options');
+  const [slot, setSlot] = useState('');
+  const [plan, setPlan] = useState('');
+  const [all, setAll] = useState(false);
+  const [picked, setPicked] = useState<number[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const list = useApi<any[]>(slot ? `/attendance/by-batch?slot_id=${slot}&plan_id=${plan}&include_all=${all ? 1 : 0}` : null);
+  const rows: any[] = slot ? list.data ?? [] : [];
+  const open = rows.filter((r) => !r.check_in); // not marked yet today
+  // Whenever the list changes, tick everyone who is not marked yet and has a valid plan.
+  useEffect(() => { setPicked((list.data ?? []).filter((r) => !r.check_in && r.status === 'active').map((r) => r.id)); }, [list.data]);
+  const toggle = (id: number) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  const everyone = open.length > 0 && open.every((r) => picked.includes(r.id));
+  const submit = async () => {
+    setBusy(true); setErr(null);
+    try {
+      const r = await api('/attendance/manual-batch', { body: { member_ids: picked } });
+      toast(`${r.marked} member${r.marked === 1 ? '' : 's'} marked present${r.notValid ? ` (${r.notValid} without a valid plan)` : ''}${r.already ? `, ${r.already} already marked` : ''}`);
+      onDone(); onClose();
+    } catch (e: any) { setErr(e.message); setBusy(false); }
+  };
+  if (!opts.data) return <Modal title="Mark attendance by batch" onClose={onClose}><Loading /></Modal>;
+  const { slots, plans, no_batch } = opts.data;
+  return (
+    <Modal wide title="Mark attendance by batch" subtitle="Choose a batch, tick the members who came today, then mark them present." onClose={onClose}>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <label htmlFor="bb" className="block text-[13px] font-medium text-ink mb-1">Batch</label>
+          <select id="bb" className="input" value={slot} onChange={(e) => { setSlot(e.target.value); setErr(null); }}>
+            <option value="">Choose a batch…</option>
+            {slots.map((s: any) => <option key={s.id} value={s.id}>{slotLabel(s)} · {s.members} member{s.members === 1 ? '' : 's'}</option>)}
+            {no_batch > 0 && <option value="none">No batch · {no_batch} member{no_batch === 1 ? '' : 's'}</option>}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="bp" className="block text-[13px] font-medium text-ink mb-1">Plan (optional)</label>
+          <select id="bp" className="input" value={plan} onChange={(e) => setPlan(e.target.value)}>
+            <option value="">All plans</option>
+            {plans.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </div>
+      </div>
+      {!slots.length && !no_batch && <p className="text-muted mt-3">No batches yet. Add time slots under Members → Plans &amp; time slots.</p>}
+      {slot && (
+        <>
+          <label className="flex items-center gap-2 mt-3 text-[13px] text-muted cursor-pointer">
+            <input type="checkbox" className="size-4 accent-[var(--color-brand)]" checked={all} onChange={(e) => setAll(e.target.checked)} />
+            Also show members whose plan has ended or is on hold
+          </label>
+          <div className="mt-3 border border-line rounded-lg overflow-hidden">
+            <div className="flex items-center justify-between gap-3 px-3 py-2 bg-canvas border-b border-line">
+              <label className="flex items-center gap-2.5 cursor-pointer font-medium text-ink">
+                <input type="checkbox" className="size-4 accent-[var(--color-brand)]" checked={everyone} disabled={!open.length}
+                  onChange={(e) => setPicked(e.target.checked ? open.map((r) => r.id) : [])} aria-label="Select everyone" />
+                Select all
+              </label>
+              <span className="text-muted text-[13px]">{picked.length} of {rows.length} ticked</span>
+            </div>
+            {!list.data ? <Loading /> : !rows.length ? <Empty icon={Users} title="No members found" text="No one in this batch matches. Try another batch or plan." /> : (
+              <ul className="max-h-80 overflow-y-auto divide-y divide-line">
+                {rows.map((r) => (
+                  <li key={r.id}>
+                    <label className={`flex items-center gap-3 px-3 py-2.5 ${r.check_in ? 'opacity-60' : 'cursor-pointer hover:bg-canvas'}`}>
+                      <input type="checkbox" className="size-4 accent-[var(--color-brand)]" checked={!r.check_in && picked.includes(r.id)} disabled={!!r.check_in} onChange={() => toggle(r.id)} />
+                      <Avatar name={r.name} size={32} />
+                      <span className="flex-1 min-w-0"><span className="block font-medium text-ink truncate">{r.name}</span><span className="text-muted text-[13px]">{r.member_code}{r.plan_name ? ` · ${r.plan_name}` : ''}</span></span>
+                      {r.check_in ? <Badge tone="green">In at {fmtTime(r.check_in)}</Badge> : <StatusBadge status={r.status} />}
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </>
+      )}
+      {err && <div className="mt-3"><ErrorNote message={err} /></div>}
+      <div className="flex justify-end gap-2 mt-5">
+        <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button variant="primary" disabled={busy || !picked.length} onClick={submit}>{busy && <Loader2 className="animate-spin" />}Mark {picked.length || ''} present</Button>
+      </div>
+    </Modal>
   );
 }
 
@@ -210,6 +298,7 @@ function Inner() {
   const sp = useSearchParams();
   const [tab, setTab] = useState(sp.get('tab') ?? 'today');
   const [checkin, setCheckin] = useState(sp.get('checkin') === '1');
+  const [batch, setBatch] = useState(false);
   const { data, error, reload } = useApi('/attendance/today');
   useEffect(() => { const t = setInterval(reload, 20_000); return () => clearInterval(t); }, [reload]);
   useEffect(() => { if (sp.get('checkin') === '1') setCheckin(true); }, [sp]);
@@ -218,6 +307,7 @@ function Inner() {
   return (
     <>
       <PageHeader title="Attendance" help="Fingerprint scans appear here automatically. Use front desk check-in if a scan fails.">
+        <Button onClick={() => setBatch(true)}><Users /> Mark by batch</Button>
         <Button variant="primary" onClick={() => setCheckin(true)}><Fingerprint /> Front desk check-in</Button>
       </PageHeader>
       <Tabs value={tab} onChange={setTab} tabs={[{ key: 'today', label: 'Today' }, { key: 'history', label: 'History' }, { key: 'devices', label: 'Machines' }, { key: 'unmatched', label: 'Unlinked', count: data.summary.unmatched }]} />
@@ -225,6 +315,7 @@ function Inner() {
       {tab === 'history' && <History />}
       {tab === 'devices' && <Devices />}
       {tab === 'unmatched' && <Unmatched onDone={reload} />}
+      {batch && <BatchCheckin onClose={() => setBatch(false)} onDone={reload} />}
       {checkin && (
         <Modal title="Front desk check-in" subtitle="Pick a person. Pick them again later to check them out." onClose={() => setCheckin(false)}>
           <PersonSearch onPick={async (p) => {
