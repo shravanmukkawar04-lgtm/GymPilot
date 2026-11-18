@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { downloadCsv, fmtDate, inr, useApi } from '@/lib/client';
 import { Button, Card, Empty, ErrorNote, Loading, METHODS, PageHeader, Stat, Table, Tabs } from '@/components/ui';
+import { ShopReport, StockReport } from '@/components/shop-reports';
 
 export default function ReportsPage() {
   const router = useRouter();
@@ -18,7 +19,7 @@ export default function ReportsPage() {
   return (
     <>
       <PageHeader title="Reports" help="How your gym is doing. Download any report for your accountant." />
-      <Tabs value={tab} onChange={setTab} tabs={[{ key: 'pnl', label: 'Profit & loss' }, { key: 'plans', label: 'Plans & enquiries' }, { key: 'gst', label: 'GST' }, { key: 'inactive', label: 'Stopped coming', count: data.inactive.length }]} />
+      <Tabs value={tab} onChange={setTab} tabs={[{ key: 'pnl', label: 'Profit & loss' }, { key: 'plans', label: 'Plans & enquiries' }, { key: 'shop', label: 'Shop sales' }, { key: 'stock', label: 'Stock' }, { key: 'gst', label: 'GST' }, { key: 'inactive', label: 'Stopped coming', count: data.inactive.length }]} />
       {tab === 'pnl' && (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
@@ -64,6 +65,8 @@ export default function ReportsPage() {
           </Card>
         </div>
       )}
+      {tab === 'shop' && <ShopReport />}
+      {tab === 'stock' && <StockReport />}
       {tab === 'gst' && (
         <Card pad={false} title="GST summary" subtitle="From bills in the last 12 months. Share with your accountant for filing." action={csv('gst-summary', data.gst)}>
           <Table rows={data.gst} empty={<Empty title="No bills yet" />} cols={[

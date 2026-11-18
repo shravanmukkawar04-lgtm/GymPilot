@@ -74,6 +74,29 @@ export function billTotal(s: any, gross: number, discount: number, rate?: number
   return Math.round(net * 100 + (net * 100 * r) / 100) / 100;
 }
 
+/**
+ * Total of a bill with several lines and one bill-level discount. Mirrors computeLines in lib/services/billing.ts
+ * (money in paise, the discount shared across lines by amount, GST worked out per line), so the total shown before
+ * saving is the total that is saved. `rate` is each line's GST %.
+ */
+export function saleTotals(s: any, lines: { gross: number; rate?: number | null }[], discount: number) {
+  const paise = (n: number) => Math.round(n * 100);
+  const each = lines.map((l) => paise(l.gross));
+  const gross = each.reduce((a, b) => a + b, 0);
+  const disc = Math.min(paise(discount || 0), gross);
+  let left = disc;
+  let total = 0;
+  lines.forEach((l, i) => {
+    const share = i === lines.length - 1 ? left : Math.round((disc * each[i]) / (gross || 1));
+    left -= share;
+    const net = each[i] - share;
+    if (!s || !s.gst_enabled || s.prices_include_gst) { total += net; return; }
+    const tax = Math.round((net * (l.rate ?? s.default_gst_rate)) / 100);
+    total += net + 2 * Math.round(tax / 2); // CGST and SGST are equal
+  });
+  return { gross: gross / 100, discount: disc / 100, total: total / 100 };
+}
+
 export function toast(message: string, kind: 'ok' | 'error' = 'ok') {
   window.dispatchEvent(new CustomEvent('gp-toast', { detail: { message, kind } }));
 }

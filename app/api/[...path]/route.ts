@@ -6,6 +6,7 @@ import '@/lib/api/staff';
 import '@/lib/api/pt';
 import '@/lib/api/inventory';
 import '@/lib/api/purchases';
+import '@/lib/api/shop-reports';
 import '@/lib/api/attendance';
 import '@/lib/api/payroll';
 import '@/lib/api/finance';

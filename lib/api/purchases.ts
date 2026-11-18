@@ -97,7 +97,7 @@ route('GET', '/purchases', 'inventory', async () => {
     FROM purchases p JOIN suppliers s ON s.id=p.supplier_id ORDER BY p.purchase_date DESC, p.id DESC LIMIT 200`);
   const summary = await one(`SELECT
       COALESCE((SELECT sum(balance) FROM purchases WHERE status IN ('unpaid','partial')),0) owed,
-      COALESCE((SELECT sum(total) FROM purchases WHERE status <> 'cancelled' AND date_trunc('month',purchase_date)=date_trunc('month',gym_today()::timestamp)),0) month`);
+      COALESCE((SELECT sum(total) FROM purchases WHERE status <> 'cancelled' AND date_trunc('month',purchase_date)=date_trunc('month',gym_today()::timestamp)),0) AS month`);
   return { rows, summary };
 });
 
@@ -187,14 +187,14 @@ route('POST', '/purchases/:id/cancel', 'inventory', async ({ params, user }) => 
 
 /** Bills that include shop products, with what each customer still owes. */
 route('GET', '/product-sales', 'inventory', async () => {
-  const rows = await q(`SELECT i.id, i.invoice_no, i.invoice_date, i.customer_name, i.customer_phone, i.member_id, i.total, i.paid, i.balance, i.status,
+  const rows = await q(`SELECT i.id, i.invoice_no, i.invoice_date, i.customer_name, i.customer_phone, i.member_id, i.gross, i.discount, i.total, i.paid, i.balance, i.status,
       (SELECT string_agg(ii.description || ' × ' || ii.qty::int, ', ' ORDER BY ii.id) FROM invoice_items ii WHERE ii.invoice_id=i.id AND ii.item_type='product') items
     FROM invoices i
     WHERE EXISTS (SELECT 1 FROM invoice_items ii WHERE ii.invoice_id=i.id AND ii.item_type='product')
     ORDER BY i.invoice_date DESC, i.id DESC LIMIT 200`);
   const summary = await one(`SELECT
       COALESCE(sum(balance) FILTER (WHERE status IN ('unpaid','partial')),0) owed,
-      COALESCE(sum(total) FILTER (WHERE status <> 'cancelled' AND date_trunc('month',invoice_date)=date_trunc('month',gym_today()::timestamp)),0) month
+      COALESCE(sum(total) FILTER (WHERE status <> 'cancelled' AND date_trunc('month',invoice_date)=date_trunc('month',gym_today()::timestamp)),0) AS month
     FROM invoices i WHERE EXISTS (SELECT 1 FROM invoice_items ii WHERE ii.invoice_id=i.id AND ii.item_type='product')`);
   return { rows, summary };
 });

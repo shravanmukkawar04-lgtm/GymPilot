@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Package, PackagePlus, Plus, ShoppingCart, SlidersHorizontal, Trash2, Truck } from 'lucide-react';
-import { api, billTotal, fmtDate, fmtDateTime, inr, todayIST, toast, useApi } from '@/lib/client';
+import { api, fmtDate, fmtDateTime, inr, saleTotals, todayIST, toast, useApi } from '@/lib/client';
 import { Badge, Button, Card, Confirm, Empty, ErrorNote, Field, FormModal, Loading, MemberPicker, METHODS, Modal, PageHeader, PayInputs, Stat, StatusBadge, Table, Tabs, toPayment } from '@/components/ui';
 
 const productFields: Field[] = [
@@ -42,12 +42,21 @@ function Sell({ products, onClose, onDone }: { products: any[]; onClose: () => v
   const [member, setMember] = useState<any>(null);
   const [walkIn, setWalkIn] = useState({ name: '', phone: '' });
   const [pay, setPay] = useState<any>({ pay_method: 'cash' });
+  const [disc, setDisc] = useState('');
+  const [discMode, setDiscMode] = useState<'amount' | 'percent'>('amount');
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [touched, setTouched] = useState(false);
   const available = products.filter((p) => p.stock > 0);
   const rate = (pid: string) => products.find((p) => String(p.id) === pid);
-  const total = cart.reduce((a, c) => { const p = rate(c.product_id); return a + (p ? billTotal(settings.data, p.sale_price * c.qty, 0, p.gst_rate) : 0); }, 0);
+  const lines = cart.flatMap((c) => { const p = rate(c.product_id); return p ? [{ gross: p.sale_price * c.qty, rate: p.gst_rate }] : []; });
+  const subtotal = saleTotals(settings.data, lines, 0).gross;
+  // The server takes the discount in rupees. A percentage is turned into rupees here, so what you see is what is saved.
+  const discount = discMode === 'percent' ? Math.round(subtotal * (Number(disc) || 0)) / 100 : Math.round((Number(disc) || 0) * 100) / 100;
+  const discError = (Number(disc) || 0) < 0 ? 'Discount cannot be negative'
+    : discMode === 'percent' && Number(disc) > 100 ? 'Discount cannot be more than 100%'
+    : discount > subtotal ? 'Discount cannot be more than the bill amount' : null;
+  const total = saleTotals(settings.data, lines, discError ? 0 : discount).total;
   const amount = touched ? pay.pay_amount : total;
   const due = Math.max(0, total - (Number(amount) || 0));
   const update = (i: number, patch: any) => setCart(cart.map((c, x) => (x === i ? { ...c, ...patch } : c)));
@@ -77,11 +86,19 @@ function Sell({ products, onClose, onDone }: { products: any[]; onClose: () => v
         </div>
       )}
       <div className="grid grid-cols-2 gap-3 mt-3">
+        <div>{label(discMode === 'percent' ? 'Discount (%) (optional)' : 'Discount (₹) (optional)', 'sd')}<input id="sd" className="input" type="number" min={0} step="any" placeholder="0" value={disc} onChange={(e) => setDisc(e.target.value)} /></div>
+        <div>{label('Discount in', 'sm')}<select id="sm" className="input" value={discMode} onChange={(e) => setDiscMode(e.target.value as 'amount' | 'percent')}><option value="amount">Rupees (₹)</option><option value="percent">Percent (%)</option></select></div>
+      </div>
+      {discError && <p className="text-rose text-[13px] mt-2">{discError}</p>}
+      <div className="grid grid-cols-2 gap-3 mt-3">
         <div>{label('Received now (₹)', 'sp')}<input id="sp" className="input" type="number" min={0} step="any" value={amount} onChange={(e) => { setTouched(true); setPay({ ...pay, pay_amount: e.target.value }); }} /></div>
         <PayInputs pay={pay} setPay={setPay} amount={amount} />
       </div>
       <div className="bg-canvas rounded-lg p-3 mt-4 flex items-center justify-between gap-3">
-        <div><div className="text-muted text-xs">Total</div><div className="font-semibold text-ink text-lg tabular-nums">{inr(total)}</div></div>
+        <div>
+          {!discError && discount > 0 && <div className="text-muted text-xs tabular-nums">{inr(subtotal)} − {inr(discount)} discount</div>}
+          <div className="text-muted text-xs">Total</div><div className="font-semibold text-ink text-lg tabular-nums">{inr(total)}</div>
+        </div>
         <div className="text-right"><div className="text-muted text-xs">Customer will owe</div><div className={`font-semibold text-lg tabular-nums ${due > 0 ? 'text-rose' : 'text-brand-dark'}`}>{inr(due)}</div></div>
       </div>
       {due > 0 && !member && !walkIn.phone && <p className="text-amber text-[13px] mt-2">Add the customer&apos;s name and phone so you know who owes you.</p>}
@@ -91,10 +108,12 @@ function Sell({ products, onClose, onDone }: { products: any[]; onClose: () => v
         <Button variant="primary" disabled={busy} onClick={async () => {
           const items = cart.filter((c) => c.product_id);
           if (!items.length) return setErr('Choose at least one product');
+          if (discError) return setErr(discError);
+          if ((Number(amount) || 0) > total + 0.005) return setErr('Received amount is more than the total after discount');
           setBusy(true); setErr(null);
           try {
             const r = await api('/products/sell', { body: {
-              items, member_id: member, payment: toPayment({ ...pay, pay_amount: amount }),
+              items, member_id: member, discount: discount || null, payment: toPayment({ ...pay, pay_amount: amount }),
               customer_name: member ? null : walkIn.name || null, customer_phone: member ? null : walkIn.phone || null,
             } });
             toast('Sale recorded'); onDone(r.invoice.id);
@@ -374,6 +393,7 @@ export default function InventoryPage() {
               { key: 'invoice_date', label: 'Date', render: (r) => fmtDate(r.invoice_date) },
               { key: 'customer_name', label: 'Customer', render: (r) => <span><span className="block font-medium text-ink">{r.customer_name}</span><span className="text-muted text-[13px]">{r.member_id ? 'Member' : 'Walk-in'}{r.customer_phone ? ` · ${r.customer_phone}` : ''}</span></span> },
               { key: 'items', label: 'Items', render: (r) => <span className="text-[13px]">{r.items}</span> },
+              { key: 'discount', label: 'Discount', align: 'right', render: (r) => r.discount > 0 ? inr(r.discount) : '—' },
               { key: 'total', label: 'Total', align: 'right', render: (r) => inr(r.total) },
               { key: 'balance', label: 'Owes you', align: 'right', render: (r) => r.status === 'cancelled' ? '—' : <span className={r.balance > 0 ? 'text-rose font-medium' : ''}>{inr(r.balance)}</span> },
               { key: 'status', label: '', render: (r) => <StatusBadge status={r.status} /> },
