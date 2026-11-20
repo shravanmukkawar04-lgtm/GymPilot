@@ -76,7 +76,17 @@ export async function liveNumberStatus(cfg: WaConfig) {
 const VAR = /\{\{\s*(\w+)\s*\}\}/g;
 
 const SAMPLES: Record<string, string> = {
-  name: 'Rohan', plan: 'Quarterly', expiry_date: '25-12-2026', due_amount: '1500', gym_name: 'Iron Temple Fitness',
+  name: 'Rahul Sharma', plan: 'Premium Annual', package: 'Premium Annual', gym_name: 'ABC Fitness Club',
+  expiry_date: '07 Sep 2026', start_date: '01 Sep 2026', days_left: '7', due_date: '15 Sep 2026', resume_date: '15 Sep 2026',
+  total_fee: '₹15,000', paid_amount: '₹10,000', amount_due: '₹5,000', due_amount: '₹5,000', payment_method: 'UPI',
+  contact_phone: '+91 98765 43210', contact_email: 'info@abcfitness.com',
+  receipt_no: 'REC-2026-00125', previously_paid: '₹5,000', payment_received: '₹5,000', outstanding_balance: '₹5,000', payment_date: '31 Aug 2026',
+  username: 'rahul.sharma', login_url: 'https://abcgym.example.com',
+  bill_no: 'BILL-1025', invoice_no: 'INV-2026-1025', purchase_date: '31 Aug 2026', products: 'Whey Protein, Shaker', total_amount: '₹4,500', discount: '₹500',
+  payable_amount: '₹4,000', pos_paid_amount: '₹4,000', pos_payment_method: 'UPI', remaining_amount: '₹0', outstanding_amount: '₹1,000',
+  addon_package: 'Personal Training', addon_total_fee: '₹5,000', addon_paid_amount: '₹3,000', addon_payment_method: 'UPI', addon_amount_due: '₹2,000',
+  addon_start_date: '01 Sep 2026', addon_expiry_date: '30 Sep 2026', addon_days_left: '5',
+  employee_id: 'EMP-1025', department: 'Fitness', designation: 'Personal Trainer', joining_date: '01 Sep 2026',
   holiday_name: 'Diwali', holiday_date: '8 Nov 2026', reopen_date: '10 Nov 2026', open_time: '7 AM', close_time: '12 PM',
 };
 

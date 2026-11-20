@@ -3,3 +3,6 @@ node_modules
 .env
 *.tsbuildinfo
 next-env.d.ts
+
+# copies saved before templates are replaced
+.backups/

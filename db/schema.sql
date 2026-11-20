@@ -418,7 +418,7 @@ CREATE TABLE IF NOT EXISTS message_templates (
   wa_template_name text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
--- Built-in templates are added per gym by gym_defaults().
+-- Built-in templates are added per gym from lib/services/template-library.ts.
 
 CREATE TABLE IF NOT EXISTS messages (
   id bigserial PRIMARY KEY,
@@ -775,22 +775,11 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO gympilot_
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO gympilot_tenant;
 REVOKE INSERT, UPDATE, DELETE ON gyms FROM gympilot_tenant;
 
--- Settings, WhatsApp settings and built-in message templates for one gym. Safe to run again.
+-- Settings and WhatsApp settings for one gym. Safe to run again.
+-- The message templates come from lib/services/template-library.ts (see scripts/install-templates.ts), not from here.
 CREATE OR REPLACE FUNCTION gym_defaults(g int) RETURNS void LANGUAGE sql AS $$
   INSERT INTO settings (id, gym_id) VALUES (g, g) ON CONFLICT (id) DO NOTHING;
   INSERT INTO whatsapp_settings (id, gym_id) VALUES (g, g) ON CONFLICT (id) DO NOTHING;
-  INSERT INTO message_templates (gym_id, key, name, subject, body, category) VALUES
-   (g,'expiry','Membership expiring','Your membership is expiring','Hi {{name}}, your {{plan}} membership at {{gym_name}} ends on {{expiry_date}}. Renew now to keep training without a break.','UTILITY'),
-   (g,'expired','Membership expired','Your membership has ended','Hi {{name}}, your membership at {{gym_name}} ended on {{expiry_date}}. We miss you! Visit us or reply here to renew.','UTILITY'),
-   (g,'dues','Payment due','Payment reminder','Hi {{name}}, you have a pending balance of Rs {{due_amount}} at {{gym_name}}. Please clear it at your next visit or pay by UPI. Thank you!','UTILITY'),
-   (g,'birthday','Birthday wishes','Happy birthday!','Happy birthday {{name}}! Everyone at {{gym_name}} wishes you a strong and healthy year ahead.','MARKETING'),
-   (g,'welcome','Welcome','Welcome to {{gym_name}}','Welcome to {{gym_name}}, {{name}}! We are excited to be part of your fitness journey.','MARKETING'),
-   (g,'inactive','We miss you','We miss you','Hi {{name}}, we have not seen you at {{gym_name}} for a while. Come back this week and get back on track!','MARKETING'),
-   (g,'lead_followup','Enquiry follow-up','Thanks for your enquiry','Hi {{name}}, thanks for your interest in {{gym_name}}. Would you like to book a free trial session this week?','MARKETING'),
-   (g,'holiday_closed','Holiday: gym closed','Gym closed on {{holiday_date}}','Dear {{name}}, {{gym_name}} will remain closed on {{holiday_date}} for {{holiday_name}}. We will reopen on {{reopen_date}}. Thank you for your understanding.','UTILITY'),
-   (g,'holiday_timings','Holiday: changed timings','Changed timings on {{holiday_date}}','Dear {{name}}, on {{holiday_date}} {{gym_name}} will be open from {{open_time}} to {{close_time}} for {{holiday_name}}. Regular timings resume the next day.','UTILITY'),
-   (g,'holiday_wishes','Festival wishes','Happy {{holiday_name}}','Dear {{name}}, wishing you and your family a very happy {{holiday_name}}! Stay healthy and keep training. With warm wishes from {{gym_name}}.','MARKETING')
-  ON CONFLICT (gym_id, key) DO NOTHING;
 $$;
 SELECT gym_defaults(id) FROM gyms;
 

@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import { one, tx } from '../db';
 import { savePhoto } from './photos';
+import { installTemplateLibrary } from './template-library';
 
 export type NewGym = {
   gym_name: string; branch_name: string; address?: string | null; phone?: string | null;
@@ -15,6 +16,7 @@ export async function createGym(v: NewGym) {
     const gym = (await one<{ id: number }>('INSERT INTO gyms (notes) VALUES ($1) RETURNING id', [v.notes ?? null], db))!;
     await db.query(`SELECT set_config('app.gym_id', $1, true)`, [String(gym.id)]); // column defaults read this
     await db.query('SELECT gym_defaults($1)', [gym.id]);
+    await installTemplateLibrary(db, gym.id);
     await db.query('UPDATE settings SET gym_name=$2, address=$3, phone=$4, email=$5 WHERE id=$1', [gym.id, v.gym_name, v.address ?? null, v.phone ?? null, v.email]);
     const branch = (await one<{ id: number }>('INSERT INTO branches (gym_id, name, address, phone) VALUES ($1,$2,$3,$4) RETURNING id',
       [gym.id, v.branch_name, v.address ?? null, v.phone ?? null], db))!;

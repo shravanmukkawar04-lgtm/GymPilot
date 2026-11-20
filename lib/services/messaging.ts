@@ -7,7 +7,10 @@ import { sendTemplate, waConfig, WaConfig } from './whatsapp';
 const VAR = /\{\{\s*(\w+)\s*\}\}/g;
 
 /** Filled in automatically for each person. Any other {{blank}} is asked for when sending. */
-export const AUTO_VARS = ['name', 'plan', 'expiry_date', 'due_amount', 'gym_name'];
+export const AUTO_VARS = [
+  'name', 'plan', 'package', 'gym_name', 'expiry_date', 'start_date', 'days_left', 'due_date',
+  'total_fee', 'paid_amount', 'payment_method', 'amount_due', 'due_amount', 'contact_phone', 'contact_email',
+];
 
 export const render = (body: string, vars: Record<string, unknown>) =>
   body.replace(VAR, (_, k) => (vars[k] === null || vars[k] === undefined ? '' : String(vars[k])));
@@ -23,11 +26,16 @@ export const normalizePhone = (phone: string | null | undefined) => {
   return digits.length === 10 ? `91${digits}` : digits;
 };
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** 2026-09-07 -> 07 Sep 2026, the way the message templates show dates. */
 export const formatDate = (d: string | null | undefined) => {
   if (!d) return '';
-  const [y, m, day] = d.split('-');
-  return `${day}-${m}-${y}`;
+  const [y, m, day] = d.slice(0, 10).split('-');
+  return `${day} ${MONTHS[Number(m) - 1]} ${y}`;
 };
+export const formatMoney = (n: number | string | null | undefined) => '₹' + new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(Number(n ?? 0));
+const METHOD_LABEL: Record<string, string> = { cash: 'Cash', upi: 'UPI', card: 'Card', bank: 'Bank transfer' };
+const todayIST = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
 
 export async function channelStatus() {
   const cfg = await waConfig();
@@ -110,9 +118,45 @@ const AUDIENCE_SQL: Record<string, string> = {
   birthdays: `archived = false AND to_char(dob,'MM-DD') = to_char(gym_today(),'MM-DD')`,
 };
 
-export const memberVars = (m: any, gym: string) => ({
-  name: m.name, plan: m.plan_name ?? '', expiry_date: formatDate(m.valid_until), due_amount: m.dues ?? 0, gym_name: gym,
+/** The gym's phone and email, shown in "please contact us at" lines. */
+export const contactVars = (s: any) => ({ contact_phone: s.phone ?? '', contact_email: s.email ?? '' });
+
+/** Money details for a group of members: their membership bill, the oldest unpaid bill and the last payment method. */
+async function billingVars(ids: number[]) {
+  const out = new Map<number, Record<string, unknown>>();
+  if (!ids.length) return out;
+  const rows = await q<any>(
+    `SELECT m.id, ci.total ci_total, ci.paid ci_paid, oi.total oi_total, oi.due oi_due, pm.method, mp.price
+     FROM members m
+     LEFT JOIN member_overview o ON o.id = m.id
+     LEFT JOIN memberships mp ON mp.id = o.membership_id
+     LEFT JOIN invoices ci ON ci.id = mp.invoice_id AND ci.status <> 'cancelled'
+     LEFT JOIN LATERAL (SELECT total, COALESCE(due_date, invoice_date) due FROM invoices WHERE member_id = m.id AND status IN ('unpaid','partial') ORDER BY invoice_date, id LIMIT 1) oi ON true
+     LEFT JOIN LATERAL (SELECT method FROM payments WHERE invoice_id = ci.id AND NOT voided ORDER BY id DESC LIMIT 1) pm ON true
+     WHERE m.id = ANY($1)`, [ids]);
+  for (const r of rows) {
+    out.set(r.id, {
+      total_fee: formatMoney(r.ci_total ?? r.oi_total ?? r.price ?? 0), paid_amount: formatMoney(r.ci_paid ?? 0),
+      payment_method: METHOD_LABEL[r.method] ?? '', due_date: formatDate(r.oi_due),
+    });
+  }
+  return out;
+}
+
+export const memberVars = (m: any, s: any, billing: Record<string, unknown> = {}) => ({
+  name: m.name, plan: m.plan_name ?? '', package: m.plan_name ?? '', gym_name: s.gym_name,
+  expiry_date: formatDate(m.valid_until), start_date: formatDate(m.start_date),
+  days_left: m.valid_until ? Math.max(0, Math.round((Date.parse(m.valid_until.slice(0, 10)) - Date.parse(todayIST())) / 86400000)) : '',
+  amount_due: formatMoney(m.dues ?? 0), due_amount: formatMoney(m.dues ?? 0),
+  total_fee: '', paid_amount: '', payment_method: '', due_date: '',
+  ...contactVars(s), ...billing,
 });
+
+/** Variables for several members at once, one query for the money details. */
+export async function membersVars(members: any[], s: any) {
+  const billing = await billingVars(members.map((m) => m.id));
+  return new Map(members.map((m) => [m.id, memberVars(m, s, billing.get(m.id))] as const));
+}
 
 async function queueOne(db: Db | undefined, a: {
   member_id?: number | null; lead_id?: number | null; to_name: string; phone?: string | null; email?: string | null;
@@ -140,7 +184,8 @@ export async function queueAudience(input: {
 
   const missing = customVars(body).filter((v) => !input.vars?.[v]?.trim());
   if (missing.length) throw bad(`Please fill in: ${missing.join(', ').replace(/_/g, ' ')}`);
-  const extra = input.vars ?? {};
+  // Dates typed in the form (2026-09-15) are shown the way the templates show them (15 Sep 2026).
+  const extra = Object.fromEntries(Object.entries(input.vars ?? {}).map(([k, v]) => [k, /_date$/.test(k) && /^\d{4}-\d{2}-\d{2}$/.test(v) ? formatDate(v) : v]));
 
   const single = !!(input.member_id || input.lead_id);
   const cfg = input.channel === 'whatsapp' ? await waConfig() : null;
@@ -159,15 +204,16 @@ export async function queueAudience(input: {
       ? await q<any>('SELECT * FROM leads WHERE id=$1', [input.lead_id])
       : await q<any>(`SELECT * FROM leads WHERE status NOT IN ('won','lost')`);
     for (const l of leads) {
-      const r = await queueOne(db, { ...common, lead_id: l.id, to_name: l.name, phone: l.phone, email: l.email, vars: { name: l.name, gym_name: s.gym_name, ...extra } });
+      const r = await queueOne(db, { ...common, lead_id: l.id, to_name: l.name, phone: l.phone, email: l.email, vars: { name: l.name, gym_name: s.gym_name, package: l.interest ?? '', plan: l.interest ?? '', ...contactVars(s), ...extra } });
       if (r) ids.push(r.id);
     }
   } else {
-    const where = input.member_id ? 'id = $1' : AUDIENCE_SQL[input.audience] && `${AUDIENCE_SQL[input.audience]} AND NOT whatsapp_opt_out`;
+    const where = input.member_id ? 'id = $1' : AUDIENCE_SQL[input.audience] && `${AUDIENCE_SQL[input.audience]} AND left_on IS NULL AND NOT whatsapp_opt_out`;
     if (!where) throw bad('Unknown audience');
     const members = await q<any>(`SELECT * FROM member_overview WHERE ${where}`, input.member_id ? [input.member_id] : []);
+    const vars = await membersVars(members, s);
     for (const m of members) {
-      const r = await queueOne(db, { ...common, member_id: m.id, to_name: m.name, phone: m.phone, email: m.email, vars: { ...memberVars(m, s.gym_name), ...extra } });
+      const r = await queueOne(db, { ...common, member_id: m.id, to_name: m.name, phone: m.phone, email: m.email, vars: { ...vars.get(m.id), ...extra } });
       if (r) ids.push(r.id);
     }
   }
@@ -188,7 +234,13 @@ export async function processCampaign(id: number) {
 export const countAudience = async (audience: string) => {
   if (audience === 'leads') return (await one<{ c: number }>(`SELECT count(*) c FROM leads WHERE status NOT IN ('won','lost')`))!.c;
   if (!AUDIENCE_SQL[audience]) return 0;
-  return (await one<{ c: number }>(`SELECT count(*) c FROM member_overview WHERE ${AUDIENCE_SQL[audience]} AND NOT whatsapp_opt_out`))!.c;
+  return (await one<{ c: number }>(`SELECT count(*) c FROM member_overview WHERE ${AUDIENCE_SQL[audience]} AND left_on IS NULL AND NOT whatsapp_opt_out`))!.c;
+};
+
+/** Which library template each automatic reminder uses. */
+const AUTOMATION_TEMPLATES = {
+  expiry: 'packageexpiryreminder', today: 'todaypackageexpirynotice', expired: 'packageexpirednotification',
+  dues: 'memberpaymentduereminder', birthday: 'happybirthday',
 };
 
 /** Creates today's reminders. Repeat runs add nothing, because each reminder has a unique key. */
@@ -199,28 +251,32 @@ export async function runAutomations() {
   const today = (await one<{ d: string }>('SELECT gym_today() d'))!.d;
   let created = 0;
 
-  const add = async (m: any, key: string, dedupe: string) => {
-    if (!templates[key]) return;
-    const r = await queueOne(db, { member_id: m.id, to_name: m.name, phone: m.phone, email: m.email, channel: 'whatsapp', template: templates[key], body: templates[key].body, vars: memberVars(m, s.gym_name), origin: 'automatic', dedupe_key: dedupe });
+  const add = async (m: any, which: keyof typeof AUTOMATION_TEMPLATES, dedupe: string) => {
+    const template = templates[AUTOMATION_TEMPLATES[which]];
+    if (!template) return;
+    if (await one('SELECT 1 FROM messages WHERE dedupe_key=$1', [dedupe])) return; // already made, so skip the lookups
+    const vars = (await membersVars([m], s)).get(m.id)!;
+    const r = await queueOne(db, { member_id: m.id, to_name: m.name, phone: m.phone, email: m.email, channel: 'whatsapp', template, body: template.body, vars, origin: 'automatic', dedupe_key: dedupe });
     if (r) created++;
   };
 
+  // Members who have left get no reminders.
   if (s.auto_expiry) {
-    for (const m of await q<any>(`SELECT * FROM member_overview WHERE NOT archived AND valid_until - gym_today() IN (7,3,1,0)`)) {
-      await add(m, 'expiry', `expiry:${m.id}:${m.valid_until}:${today}`);
+    for (const m of await q<any>(`SELECT *, valid_until - gym_today() AS days_to FROM member_overview WHERE NOT archived AND left_on IS NULL AND valid_until - gym_today() IN (7,3,1,0)`)) {
+      await add(m, m.days_to === 0 ? 'today' : 'expiry', `expiry:${m.id}:${m.valid_until}:${today}`);
     }
-    for (const m of await q<any>(`SELECT * FROM member_overview WHERE NOT archived AND valid_until = gym_today() - 1`)) {
+    for (const m of await q<any>(`SELECT * FROM member_overview WHERE NOT archived AND left_on IS NULL AND valid_until = gym_today() - 1`)) {
       await add(m, 'expired', `expired:${m.id}:${m.valid_until}`);
     }
   }
   if (s.auto_dues) {
     const week = (await one<{ w: string }>(`SELECT to_char(gym_today(),'IYYY-IW') w`))!.w;
-    for (const m of await q<any>(`SELECT * FROM member_overview WHERE NOT archived AND dues > 0`)) {
+    for (const m of await q<any>(`SELECT * FROM member_overview WHERE NOT archived AND left_on IS NULL AND dues > 0`)) {
       await add(m, 'dues', `dues:${m.id}:${week}`);
     }
   }
   if (s.auto_birthday) {
-    for (const m of await q<any>(`SELECT * FROM member_overview WHERE NOT archived AND to_char(dob,'MM-DD') = to_char(gym_today(),'MM-DD')`)) {
+    for (const m of await q<any>(`SELECT * FROM member_overview WHERE NOT archived AND left_on IS NULL AND to_char(dob,'MM-DD') = to_char(gym_today(),'MM-DD')`)) {
       await add(m, 'birthday', `birthday:${m.id}:${today}`);
     }
   }
@@ -233,13 +289,15 @@ export async function runAutomations() {
  * and the Welcome template is approved; otherwise it waits in Messages for one-click sending.
  */
 export async function sendWelcome(memberId: number): Promise<{ status: 'sent' | 'queued' | 'failed' | 'skipped'; error?: string | null }> {
+  // The library's registration template asks for a username and login link, which GymPilot members do not have,
+  // so there is no automatic welcome. Send "Member registration" from Messages if you want to use it.
   const t = await one<any>(`SELECT * FROM message_templates WHERE key='welcome'`);
   const m = await one<any>('SELECT * FROM member_overview WHERE id=$1', [memberId]);
   if (!t || !m?.phone) return { status: 'skipped' };
   const s = await getSettings();
   const r = await queueOne(undefined, {
     member_id: m.id, to_name: m.name, phone: m.phone, email: m.email, channel: 'whatsapp', template: t, body: t.body,
-    vars: memberVars(m, s.gym_name), origin: 'automatic', dedupe_key: `welcome:${m.id}`,
+    vars: memberVars(m, s), origin: 'automatic', dedupe_key: `welcome:${m.id}`,
   });
   if (!r) return { status: 'skipped' };
   await flushQueue([r.id]);

@@ -11,6 +11,7 @@
                     "start":  "next start",
                     "typecheck":  "tsc --noEmit",
                     "db:setup":  "tsx --env-file=.env scripts/setup-db.ts",
+                    "db:templates":  "tsx --env-file=.env scripts/install-templates.ts",
                     "db:seed":  "tsx --env-file=.env scripts/seed.ts",
                     "db:reset":  "tsx --env-file=.env scripts/reset.ts"
                 },

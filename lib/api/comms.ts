@@ -101,14 +101,16 @@ route('PUT', '/comms/templates/:id', 'comms', async ({ params, body }) => {
 route('POST', '/comms/templates/sync', 'comms', async () => {
   const cfg = await requireWaba();
   const remote = await listRemoteTemplates(cfg);
-  const local = await q<any>('SELECT id, wa_template_name FROM message_templates WHERE wa_template_name IS NOT NULL');
-  const known = new Map(local.map((l) => [l.wa_template_name, l.id]));
+  const local = await q<any>('SELECT id, key, wa_template_name FROM message_templates WHERE wa_template_name IS NOT NULL OR key IS NOT NULL');
+  // A library template matches Meta's template of the same name, so one made in Meta by hand is linked, not copied.
+  const known = new Map<string, number>();
+  for (const l of local) { if (l.key) known.set(l.key, l.id); if (l.wa_template_name) known.set(l.wa_template_name, l.id); }
   let imported = 0;
   for (const r of remote) {
     const existing = known.get(r.name);
     const reason = r.rejected_reason && r.rejected_reason !== 'NONE' ? r.rejected_reason : null;
     if (existing) {
-      await update('message_templates', existing, { wa_status: r.status, wa_template_id: r.id, wa_rejected_reason: reason });
+      await update('message_templates', existing, { wa_status: r.status, wa_template_id: r.id, wa_template_name: r.name, wa_rejected_reason: reason });
     } else {
       const part = (type: string) => (r.components ?? []).find((c: any) => c.type === type)?.text ?? null;
       const body = part('BODY');
@@ -130,7 +132,9 @@ route('POST', '/comms/templates/:id/submit', 'comms', async ({ params }) => {
   if (t.wa_template_id && t.wa_status !== 'REJECTED') throw bad('This template has already been sent to WhatsApp');
   validateForMeta(t);
   // A rejected template gets a new name, because WhatsApp will not reuse the old one straight away.
-  const slug = t.wa_status === 'REJECTED' ? `${templateSlug(t.name, t.id)}_${Date.now().toString(36)}` : templateSlug(t.name, t.id);
+  // Library templates go to Meta under their exact name; other templates get a name made from theirs.
+  const base = t.key && /^[a-z0-9_]+$/.test(t.key) ? t.key : templateSlug(t.name, t.id);
+  const slug = t.wa_status === 'REJECTED' ? `${base}_${Date.now().toString(36)}` : base;
   const r = await submitTemplate(cfg, t, slug);
   return update('message_templates', t.id, { wa_template_name: slug, wa_template_id: r.id, wa_status: r.status ?? 'PENDING', wa_rejected_reason: null });
 });

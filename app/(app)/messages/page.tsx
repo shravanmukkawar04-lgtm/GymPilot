@@ -175,7 +175,7 @@ function Compose({ d, onDone, openSetup }: { d: any; onDone: (toCampaigns: boole
           <div className="mb-4">
             <label htmlFor="msg" className="block text-[13px] font-medium text-ink mb-1">Message</label>
             <textarea id="msg" rows={4} className="input" value={text} onChange={(e) => setText(e.target.value)} />
-            <p className="text-muted text-xs mt-1">You can use {'{{name}} {{plan}} {{expiry_date}} {{due_amount}} {{gym_name}}'}</p>
+            <p className="text-muted text-xs mt-1">You can use {'{{name}} {{package}} {{expiry_date}} {{days_left}} {{amount_due}} {{gym_name}}'}</p>
           </div>
         )}
 
