@@ -6,6 +6,7 @@ import * as s from './schemas';
 import { branchCookie, can, clearCookie, PERMISSIONS, sessionCookie } from './session';
 import { runAutomations } from '../services/messaging';
 import { getSettings } from '../services/billing';
+import { syncWhatsAppCostsIfStale } from '../services/wa-costs';
 import { photoResponse, PhotoKind, savePhoto } from '../services/photos';
 
 /* ---------- Login ---------- */
@@ -94,6 +95,7 @@ route('GET', '/dashboard', 'dashboard', async ({ user }) => {
   if (!can(user.role, 'billing')) return trainerDashboard(user.staff_id ?? -1);
   // A savepoint, so a failure here cannot spoil the rest of the request.
   await tx(() => runAutomations()).catch((e) => console.error('[automations]', e));
+  await tx(() => syncWhatsAppCostsIfStale()).catch((e) => console.error('[whatsapp costs]', e));
 
   const [kpis, chart, recent, setup] = await Promise.all([
     one(`SELECT
@@ -112,6 +114,13 @@ route('GET', '/dashboard', 'dashboard', async ({ user }) => {
       (SELECT count(*) FROM member_overview WHERE NOT archived AND dues > 0) members_with_dues,
       (SELECT count(*) FROM leads WHERE next_followup <= gym_today() AND status NOT IN ('won','lost')) followups_due,
       (SELECT count(*) FROM products WHERE active AND stock <= reorder_level) low_stock,
+      (SELECT access_token_enc IS NOT NULL FROM whatsapp_settings) wa_connected,
+      (SELECT COALESCE(sum(cost),0) FROM whatsapp_costs WHERE day >= date_trunc('month',gym_today()::timestamp)::date) wa_cost_month,
+      (SELECT COALESCE(sum(cost),0) FROM whatsapp_costs WHERE day >= date_trunc('month',gym_today()::timestamp)::date AND category='marketing') wa_cost_marketing,
+      (SELECT COALESCE(sum(cost),0) FROM whatsapp_costs WHERE day >= date_trunc('month',gym_today()::timestamp)::date AND category='utility') wa_cost_utility,
+      (SELECT COALESCE(sum(volume),0) FROM whatsapp_costs WHERE day >= date_trunc('month',gym_today()::timestamp)::date) wa_messages_month,
+      (SELECT max(currency) FROM whatsapp_costs) wa_currency,
+      (SELECT costs_error FROM whatsapp_settings) wa_cost_error,
       (SELECT count(*) FROM messages WHERE status='queued') messages_queued,
       (SELECT count(*) FROM messages WHERE status='failed' AND channel='whatsapp' AND error LIKE '%131042%' AND created_at > now() - interval '3 days') wa_no_credit,
       (SELECT count(DISTINCT device_user_id) FROM biometric_punches WHERE result='unknown') unmatched,
@@ -180,7 +189,7 @@ const settingsSchema = z.object({
   gst_enabled: s.bool, default_gst_rate: z.coerce.number().min(0).max(40), prices_include_gst: s.bool, sac_code: s.reqText,
   upi_id: s.text, invoice_prefix: z.string().trim().regex(/^[A-Za-z0-9-]{1,6}$/, 'must be 1 to 6 letters or numbers'), invoice_terms: s.text,
   weekly_off: z.coerce.number().int().min(-1).max(6).nullish().transform((v) => (v === -1 || v === null || v === undefined ? null : v)),
-  inactive_days: z.coerce.number().int().min(1).max(365), auto_expiry: s.bool, auto_dues: s.bool, auto_birthday: s.bool, auto_welcome: s.bool,
+  inactive_days: z.coerce.number().int().min(1).max(365), auto_expiry: s.bool, auto_dues: s.bool, auto_birthday: s.bool, auto_welcome: s.bool, member_login_url: s.text,
 });
 
 // Every screen that bills needs the GST settings, so anyone logged in may read them. Only the owner changes them.

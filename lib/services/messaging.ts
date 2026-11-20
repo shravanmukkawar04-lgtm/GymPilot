@@ -9,7 +9,7 @@ const VAR = /\{\{\s*(\w+)\s*\}\}/g;
 /** Filled in automatically for each person. Any other {{blank}} is asked for when sending. */
 export const AUTO_VARS = [
   'name', 'plan', 'package', 'gym_name', 'expiry_date', 'start_date', 'days_left', 'due_date',
-  'total_fee', 'paid_amount', 'payment_method', 'amount_due', 'due_amount', 'contact_phone', 'contact_email',
+  'total_fee', 'paid_amount', 'payment_method', 'amount_due', 'due_amount', 'contact_phone', 'contact_email', 'username', 'login_url',
 ];
 
 export const render = (body: string, vars: Record<string, unknown>) =>
@@ -149,6 +149,8 @@ export const memberVars = (m: any, s: any, billing: Record<string, unknown> = {}
   days_left: m.valid_until ? Math.max(0, Math.round((Date.parse(m.valid_until.slice(0, 10)) - Date.parse(todayIST())) / 86400000)) : '',
   amount_due: formatMoney(m.dues ?? 0), due_amount: formatMoney(m.dues ?? 0),
   total_fee: '', paid_amount: '', payment_method: '', due_date: '',
+  // The member's ID is their username; the login link is the one set in Settings.
+  username: m.member_code ?? '', login_url: s.member_login_url ?? '',
   ...contactVars(s), ...billing,
 });
 
@@ -285,19 +287,18 @@ export async function runAutomations() {
 }
 
 /**
- * Welcomes a new member on WhatsApp. Sends at once when WhatsApp Business is connected
- * and the Welcome template is approved; otherwise it waits in Messages for one-click sending.
+ * Sends the "Member registration" message to a newly added member. Sends at once when WhatsApp Business is connected
+ * and the template is approved; otherwise it waits in Messages for one-click sending.
  */
-export async function sendWelcome(memberId: number): Promise<{ status: 'sent' | 'queued' | 'failed' | 'skipped'; error?: string | null }> {
-  // The library's registration template asks for a username and login link, which GymPilot members do not have,
-  // so there is no automatic welcome. Send "Member registration" from Messages if you want to use it.
-  const t = await one<any>(`SELECT * FROM message_templates WHERE key='welcome'`);
+export async function sendRegistration(memberId: number): Promise<{ status: 'sent' | 'queued' | 'failed' | 'skipped'; error?: string | null }> {
+  const t = await one<any>(`SELECT * FROM message_templates WHERE key='memberregistration'`);
   const m = await one<any>('SELECT * FROM member_overview WHERE id=$1', [memberId]);
   if (!t || !m?.phone) return { status: 'skipped' };
   const s = await getSettings();
+  const vars = (await membersVars([m], s)).get(m.id)!;
   const r = await queueOne(undefined, {
     member_id: m.id, to_name: m.name, phone: m.phone, email: m.email, channel: 'whatsapp', template: t, body: t.body,
-    vars: memberVars(m, s), origin: 'automatic', dedupe_key: `welcome:${m.id}`,
+    vars, origin: 'automatic', dedupe_key: `registration:${m.id}`,
   });
   if (!r) return { status: 'skipped' };
   await flushQueue([r.id]);

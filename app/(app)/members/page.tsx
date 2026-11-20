@@ -95,9 +95,9 @@ function PlansTab() {
 function welcomeToast(name: string, w: any) {
   toast(`${name} added`);
   if (!w) return;
-  if (w.status === 'sent') toast('Welcome message sent on WhatsApp');
-  else if (w.status === 'queued') toast('Welcome message is ready to send in Messages');
-  else if (w.status === 'failed') toast(`Welcome message could not be sent: ${w.error ?? 'unknown error'}`, 'error');
+  if (w.status === 'sent') toast('Registration message sent on WhatsApp');
+  else if (w.status === 'queued') toast('Registration message is ready to send in Messages');
+  else if (w.status === 'failed') toast(`Registration message could not be sent: ${w.error ?? 'unknown error'}`, 'error');
 }
 
 function AddMember({ onClose, onDone }: { onClose: () => void; onDone: (id: number) => void }) {
@@ -130,23 +130,18 @@ function AddMember({ onClose, onDone }: { onClose: () => void; onDone: (id: numb
     { name: 's1', label: 'Member details', type: 'section' }, ...memberFields.filter((f) => f.name !== 'whatsapp_opt_out'),
     { name: 's2', label: 'Membership', type: 'section', show: isNew }, ...sale,
     ...existing,
-    { name: 'send_welcome', label: 'Send a welcome message on WhatsApp', type: 'checkbox', help: 'Uses your Welcome template in Messages.' },
   ];
   return (
     <FormModal wide title="Add a member" subtitle="Only name and phone are required. Everything else can be added later." submitLabel="Add member"
-      fields={fields} initial={{ kind: 'new', pay_method: 'cash', send_welcome: !!settings.data.auto_welcome }} onClose={onClose}
-      onChangeValues={(name, v) => ({
-        ...syncPay(settings.data, price)(name, v),
-        // Migrated members usually should not get a welcome message.
-        ...(name === 'kind' ? { send_welcome: v.kind === 'new' && !!settings.data.auto_welcome } : {}),
-      })}
+      fields={fields} initial={{ kind: 'new', pay_method: 'cash' }} onClose={onClose}
+      onChangeValues={(name, v) => syncPay(settings.data, price)(name, v)}
       summary={(v) => (isNew(v) && v.plan_id ? <BillSummary settings={settings.data} gross={price(v)} discount={Number(v.discount) || 0} pay={Number(v.pay_amount) || 0} /> : null)}
       onSubmit={async (v) => {
         const { kind, plan_id, slot_id, start_date, end_date, discount, pay_amount, pay_method, pay_cash, pay_online_method, pay_reference, old_payment, old_date,
-          member_code, joined_on, balance_due, send_welcome, ...member } = v;
+          member_code, joined_on, balance_due, ...member } = v;
         const body = kind === 'existing'
-          ? { ...member, kind, send_welcome, existing: { member_code, joined_on, plan_id, slot_id, start_date, end_date, balance_due: Number(balance_due) || 0 } }
-          : { ...member, kind, send_welcome, sale: plan_id ? toSale(v) : undefined };
+          ? { ...member, kind, existing: { member_code, joined_on, plan_id, slot_id, start_date, end_date, balance_due: Number(balance_due) || 0 } }
+          : { ...member, kind, sale: plan_id ? toSale(v) : undefined };
         const r = await api('/members', { body });
         welcomeToast(member.name, r.welcome);
         onDone(r.member.id);

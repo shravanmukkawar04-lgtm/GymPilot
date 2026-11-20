@@ -587,9 +587,30 @@ ALTER TABLE expenses ADD COLUMN IF NOT EXISTS supplier_payment_id int REFERENCES
 CREATE UNIQUE INDEX IF NOT EXISTS expenses_supplier_payment ON expenses (supplier_payment_id);
 ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS purchase_id int REFERENCES purchases(id) ON DELETE SET NULL;
 
+-- What WhatsApp charged, per day and category, read from Meta's pricing report. Kept as history.
+CREATE TABLE IF NOT EXISTS whatsapp_costs (
+  id serial PRIMARY KEY,
+  day date NOT NULL,
+  category text NOT NULL,       -- marketing, utility, authentication, service, ...
+  volume int NOT NULL DEFAULT 0,
+  cost numeric(14,4) NOT NULL DEFAULT 0,
+  currency text,
+  synced_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE whatsapp_settings ADD COLUMN IF NOT EXISTS costs_synced_at timestamptz;
+ALTER TABLE whatsapp_settings ADD COLUMN IF NOT EXISTS costs_error text;
+ALTER TABLE whatsapp_settings ADD COLUMN IF NOT EXISTS costs_tried_at timestamptz;
+-- How Meta billed each message, from its delivery reports. And the category Meta gave each template.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS billing_category text;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS billable boolean;
+ALTER TABLE message_templates ADD COLUMN IF NOT EXISTS wa_category text;
+ALTER TABLE message_templates ADD COLUMN IF NOT EXISTS wa_previous_category text;
+-- Shown as "Login URL" in the member registration message.
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS member_login_url text;
+
 -- Tables that belong to a gym as a whole, and tables that belong to one branch.
 CREATE OR REPLACE FUNCTION gp_gym_tables() RETURNS text[] LANGUAGE sql IMMUTABLE AS $$ SELECT ARRAY[
-  'settings','whatsapp_settings','message_templates','invoice_counters','gym_counters','photos','users','branches','suppliers'] $$;
+  'settings','whatsapp_settings','message_templates','invoice_counters','gym_counters','photos','users','branches','suppliers','whatsapp_costs'] $$;
 CREATE OR REPLACE FUNCTION gp_branch_tables() RETURNS text[] LANGUAGE sql IMMUTABLE AS $$ SELECT ARRAY[
   'staff','leads','lead_activities','members','plans','slots','invoices','invoice_items','payments','memberships','membership_freezes',
   'pt_packages','pt_subscriptions','pt_sessions','products','stock_movements','biometric_devices','biometric_enrollments',
@@ -663,6 +684,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS payroll_runs_branch_month ON payroll_runs (bra
 ALTER TABLE biometric_enrollments DROP CONSTRAINT IF EXISTS biometric_enrollments_pkey;
 CREATE UNIQUE INDEX IF NOT EXISTS biometric_enrollments_branch_pin ON biometric_enrollments (branch_id, device_user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS gym_counters_key ON gym_counters (gym_id, name);
+CREATE UNIQUE INDEX IF NOT EXISTS whatsapp_costs_day ON whatsapp_costs (gym_id, day, category);
 CREATE UNIQUE INDEX IF NOT EXISTS photos_ref ON photos (gym_id, kind, ref_id);
 CREATE INDEX IF NOT EXISTS branches_gym_idx ON branches (gym_id);
 CREATE INDEX IF NOT EXISTS users_gym_idx ON users (gym_id);
@@ -751,7 +773,7 @@ BEGIN
       USING (gym_id = app_gym() AND (app_branch() IS NULL OR branch_id = app_branch()))
       WITH CHECK (gym_id = app_gym() AND (app_branch() IS NULL OR branch_id = app_branch()) AND branch_in_gym(branch_id))$p$, t);
   END LOOP;
-  FOREACH t IN ARRAY ARRAY['settings','whatsapp_settings','message_templates','invoice_counters','gym_counters','photos','suppliers'] LOOP
+  FOREACH t IN ARRAY ARRAY['settings','whatsapp_settings','message_templates','invoice_counters','gym_counters','photos','suppliers','whatsapp_costs'] LOOP
     EXECUTE format('CREATE POLICY tenant ON %I USING (gym_id = app_gym()) WITH CHECK (gym_id = app_gym())', t);
   END LOOP;
 END $$;

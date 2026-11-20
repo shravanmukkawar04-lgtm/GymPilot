@@ -42,7 +42,30 @@ export async function POST(req: NextRequest) {
       if (phoneId) byPhone.set(String(phoneId), [...(byPhone.get(String(phoneId)) ?? []), change.value]);
     }
   }
-  if (!byPhone.size) return new Response('OK');
+
+  // Template events (for example Meta changing a template's category) name the business account, not a phone number.
+  const byWaba = new Map<string, any[]>();
+  for (const entry of payload.entry ?? []) {
+    for (const change of entry.changes ?? []) {
+      if (change.field === 'template_category_update' && entry.id) byWaba.set(String(entry.id), [...(byWaba.get(String(entry.id)) ?? []), change.value]);
+    }
+  }
+  if (!byPhone.size && !byWaba.size) return new Response('OK');
+
+  for (const [wabaId, values] of byWaba) {
+    const gym = await one<any>(
+      `SELECT w.gym_id, w.app_secret_enc FROM whatsapp_settings w JOIN gyms g ON g.id=w.gym_id WHERE w.waba_id=$1 AND g.active`, [wabaId]);
+    if (!gym?.app_secret_enc || !validSignature(raw, req.headers.get('x-hub-signature-256'), decrypt(gym.app_secret_enc))) {
+      return new Response('Invalid signature', { status: 401 });
+    }
+    await asTenant(gym.gym_id, null, async () => {
+      for (const v of values) {
+        if (!v.message_template_id || !v.new_category) continue;
+        await q(`UPDATE message_templates SET wa_category=$2, wa_previous_category=$3 WHERE wa_template_id=$1`,
+          [String(v.message_template_id), String(v.new_category).toUpperCase(), v.previous_category ? String(v.previous_category).toUpperCase() : null]);
+      }
+    });
+  }
 
   for (const [phoneId, values] of byPhone) {
     const gym = await one<any>(
@@ -54,6 +77,11 @@ export async function POST(req: NextRequest) {
     await asTenant(gym.gym_id, null, async () => {
       for (const value of values) {
         for (const st of value.statuses ?? []) {
+          // How Meta billed this message. It arrives on the delivered or read report, and is billable when its type is "regular".
+          if (st.pricing?.category || st.pricing?.type) {
+            await q(`UPDATE messages SET billing_category=$2, billable=$3 WHERE wa_message_id=$1`,
+              [st.id, st.pricing.category ? String(st.pricing.category).toLowerCase() : null, st.pricing.type ? st.pricing.type === 'regular' : !!st.pricing.billable]);
+          }
           if (st.status === 'failed') {
             const reason = st.errors?.[0]?.error_data?.details || st.errors?.[0]?.title || 'WhatsApp could not deliver this message';
             await q(`UPDATE messages SET status='failed', delivery_status='failed', error=$2 WHERE wa_message_id=$1`, [st.id, String(reason).slice(0, 500)]);

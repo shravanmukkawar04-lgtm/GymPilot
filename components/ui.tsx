@@ -62,6 +62,24 @@ export function Avatar({ name, size = 36, src }: { name: string; size?: number; 
   return <span style={{ width: size, height: size, fontSize: size * 0.36 }} className="inline-flex shrink-0 items-center justify-center rounded-full bg-brand-soft text-brand-dark font-semibold">{initials}</span>;
 }
 
+/**
+ * Shows message text the way WhatsApp does: *bold*, _italic_ and ~strikethrough~ lose their marks and are styled.
+ * Like WhatsApp, a mark only counts when it touches the text inside it, so "2 * 3" stays as typed.
+ */
+const WA_MARK = /(?<![\w*])\*([^\s*](?:[^*\n]*[^\s*])?)\*(?![\w*])|(?<![\w_])_([^\s_](?:[^_\n]*[^\s_])?)_(?![\w_])|(?<![\w~])~([^\s~](?:[^~\n]*[^\s~])?)~(?![\w~])/g;
+export function WaText({ text }: { text: string }) {
+  const out: ReactNode[] = [];
+  let last = 0, n = 0;
+  for (const m of text.matchAll(WA_MARK)) {
+    if (m.index! > last) out.push(text.slice(last, m.index));
+    const [, bold, italic, strike] = m;
+    out.push(bold !== undefined ? <strong key={n++} className="font-semibold">{bold}</strong> : italic !== undefined ? <em key={n++}>{italic}</em> : <s key={n++}>{strike}</s>);
+    last = m.index! + m[0].length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return <>{out}</>;
+}
+
 /** Take a photo with the phone or laptop camera, or choose one. Value: data URL (new), null (removed) or undefined (unchanged). */
 export function PhotoInput({ value, current, name, onChange }: { value: string | null | undefined; current?: string | null; name?: string; onChange: (v: string | null) => void }) {
   const [err, setErr] = useState<string | null>(null);

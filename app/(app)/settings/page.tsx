@@ -31,7 +31,9 @@ const GROUPS: { title: string; subtitle: string; fields: Field[] }[] = [
     { name: 'auto_expiry', label: 'Membership ending', type: 'checkbox', help: '7, 3 and 1 days before, on the day, and the day after' },
     { name: 'auto_dues', label: 'Payment due', type: 'checkbox', help: 'Once a week while money is owed' },
     { name: 'auto_birthday', label: 'Birthday wishes', type: 'checkbox' },
-    { name: 'auto_welcome', label: 'Welcome message for new members', type: 'checkbox', help: 'Sent on WhatsApp when a new member is added. You can untick it for one member while adding them.' },
+    { name: 'auto_welcome', label: 'Member registration message', type: 'checkbox', help: 'The Member registration template is sent on WhatsApp whenever a new member is added. Untick it to stop sending it.' },
+    { name: 'member_login_url', label: 'Login link in the registration message', placeholder: 'https://yourgym.com (optional)', full: true, show: (v) => !!v.auto_welcome,
+      help: 'Shown as "Login URL" in that message. Leave it blank if members have no login; it then shows a dash.' },
   ] },
 ];
 

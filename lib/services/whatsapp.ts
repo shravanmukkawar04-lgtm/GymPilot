@@ -71,6 +71,29 @@ export async function liveNumberStatus(cfg: WaConfig) {
   return { quality_rating: (info.quality_rating ?? null) as string | null, tier, limit };
 }
 
+/**
+ * Meta's pricing report: what messages cost, per day and category, between two moments (unix seconds).
+ * The currency is the account's own. Meta can take a day to settle the latest numbers.
+ */
+export async function fetchPricing(cfg: WaConfig, startUnix: number, endUnix: number) {
+  const fields = `currency,pricing_analytics.start(${startUnix}).end(${endUnix}).granularity(DAILY).dimensions(["PRICING_CATEGORY"])`;
+  const res = await fetch(`${GRAPH()}/${cfg.waba_id}?fields=${encodeURIComponent(fields)}`, {
+    headers: { Authorization: `Bearer ${cfg.token}` }, signal: AbortSignal.timeout(10_000),
+  });
+  const data: any = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const e = data?.error ?? {};
+    throw new Error(`WhatsApp: ${e.error_user_msg || e.message || `error ${res.status}`}${e.code ? ` (code ${e.code})` : ''}`);
+  }
+  const points: { start: number; category: string; volume: number; cost: number }[] = [];
+  for (const block of data.pricing_analytics?.data ?? []) {
+    for (const p of block.data_points ?? []) {
+      points.push({ start: Number(p.start), category: String(p.pricing_category ?? 'other').toLowerCase(), volume: Number(p.volume ?? 0), cost: Number(p.cost ?? 0) });
+    }
+  }
+  return { currency: (data.currency ?? null) as string | null, points };
+}
+
 /* ---------- Templates ---------- */
 
 const VAR = /\{\{\s*(\w+)\s*\}\}/g;

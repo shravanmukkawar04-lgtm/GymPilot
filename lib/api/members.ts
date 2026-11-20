@@ -4,7 +4,7 @@ import { ApiError, bad, notFound, parse, route } from './router';
 import * as s from './schemas';
 import { checkPastDate, createInvoice, getSettings, pickSlot, sellMembership, slotLabel } from '../services/billing';
 import { setBiometricId } from '../services/attendance';
-import { sendWelcome } from '../services/messaging';
+import { sendRegistration } from '../services/messaging';
 import { savePhoto } from '../services/photos';
 
 const memberSchema = z.object({
@@ -144,8 +144,10 @@ route('POST', '/members', 'members', async ({ body, user }) => {
     return { member: m, invoice: r?.invoice ?? null };
   });
   // The member is saved even if the message cannot go out.
-  const wantWelcome = body.send_welcome ?? (!existing && (await getSettings()).auto_welcome);
-  const welcome = wantWelcome ? await tx(() => sendWelcome(result.member.id)).catch((e) => ({ status: 'failed' as const, error: String(e?.message ?? e) })) : null;
+  // The Member registration message goes to every new member while it is switched on in Settings.
+  // Members moved over from an old system are not messaged.
+  const wantRegistration = !existing && !!(await getSettings()).auto_welcome;
+  const welcome = wantRegistration ? await tx(() => sendRegistration(result.member.id)).catch((e) => ({ status: 'failed' as const, error: String(e?.message ?? e) })) : null;
   return { ...result, welcome };
 });
 

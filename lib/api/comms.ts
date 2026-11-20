@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { asTenant, insert, one, q, tx, update } from '../db';
 import { bad, notFound, parse, route } from './router';
+import { costHistory, syncWhatsAppCosts } from '../services/wa-costs';
 import * as s from './schemas';
 import { AUTO_VARS, channelStatus, countAudience, flushQueue, processCampaign, queueAudience, runAutomations } from '../services/messaging';
 import {
@@ -110,14 +111,14 @@ route('POST', '/comms/templates/sync', 'comms', async () => {
     const existing = known.get(r.name);
     const reason = r.rejected_reason && r.rejected_reason !== 'NONE' ? r.rejected_reason : null;
     if (existing) {
-      await update('message_templates', existing, { wa_status: r.status, wa_template_id: r.id, wa_template_name: r.name, wa_rejected_reason: reason });
+      await update('message_templates', existing, { wa_status: r.status, wa_template_id: r.id, wa_template_name: r.name, wa_rejected_reason: reason, wa_category: r.category ?? null });
     } else {
       const part = (type: string) => (r.components ?? []).find((c: any) => c.type === type)?.text ?? null;
       const body = part('BODY');
       if (!body) continue;
       await insert('message_templates', {
         name: r.name.replace(/_/g, ' '), body, header: part('HEADER'), footer: part('FOOTER'), category: r.category === 'MARKETING' ? 'MARKETING' : 'UTILITY',
-        language: r.language, wa_template_name: r.name, wa_template_id: r.id, wa_status: r.status, wa_rejected_reason: reason,
+        language: r.language, wa_template_name: r.name, wa_template_id: r.id, wa_status: r.status, wa_rejected_reason: reason, wa_category: r.category ?? null,
       });
       imported++;
     }
@@ -136,7 +137,7 @@ route('POST', '/comms/templates/:id/submit', 'comms', async ({ params }) => {
   const base = t.key && /^[a-z0-9_]+$/.test(t.key) ? t.key : templateSlug(t.name, t.id);
   const slug = t.wa_status === 'REJECTED' ? `${base}_${Date.now().toString(36)}` : base;
   const r = await submitTemplate(cfg, t, slug);
-  return update('message_templates', t.id, { wa_template_name: slug, wa_template_id: r.id, wa_status: r.status ?? 'PENDING', wa_rejected_reason: null });
+  return update('message_templates', t.id, { wa_template_name: slug, wa_template_id: r.id, wa_status: r.status ?? 'PENDING', wa_rejected_reason: null, wa_category: r.category ?? null });
 });
 
 route('DELETE', '/comms/templates/:id', 'comms', async ({ params }) => {
@@ -183,6 +184,19 @@ route('GET', '/comms/whatsapp/status', 'comms', async () => {
     one<any>(`SELECT count(*) n, max(created_at) last_at FROM messages WHERE channel='whatsapp' AND status='failed' AND error LIKE '%131042%' AND created_at > now() - interval '7 days'`),
   ]);
   return { connected: true, ...live, ...usage, refused_count: refused?.n ?? 0, refused_last_at: refused?.last_at ?? null, billing_url: 'https://business.facebook.com/billing_hub' };
+});
+
+/** What WhatsApp charged, month by month, as read from Meta and kept as history. */
+route('GET', '/comms/whatsapp/costs', 'comms', async () => {
+  const [rows, state] = await Promise.all([costHistory(), one<any>('SELECT costs_synced_at, costs_error FROM whatsapp_settings')]);
+  return { rows, synced_at: state?.costs_synced_at ?? null, error: state?.costs_error ?? null };
+});
+
+route('POST', '/comms/whatsapp/costs/sync', 'comms', async () => {
+  const r = await syncWhatsAppCosts();
+  if (!r) throw bad('Connect your WhatsApp Business account first (WhatsApp setup tab)');
+  if (r.error) throw bad(`Could not read costs from Meta. ${r.error}`);
+  return r;
 });
 
 route('PUT', '/comms/whatsapp', 'settings', async ({ body, req, user }) => {

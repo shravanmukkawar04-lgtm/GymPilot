@@ -2,8 +2,8 @@
 import { Suspense, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { AlertCircle, CheckCheck, CheckCircle2, ExternalLink, Link2, MessageCircle, PartyPopper, Pencil, Plus, RefreshCw, Send, Trash2 } from 'lucide-react';
-import { api, fmtDate, fmtDateTime, toast, useApi, waLink } from '@/lib/client';
-import { Badge, Button, Card, Confirm, Empty, ErrorNote, FormFields, FormModal, Loading, MemberPicker, Modal, PageHeader, StatusBadge, Table, Tabs } from '@/components/ui';
+import { api, fmtDate, fmtDateTime, inr, toast, useApi, waLink } from '@/lib/client';
+import { Badge, Button, Card, Confirm, Empty, ErrorNote, FormFields, FormModal, Loading, MemberPicker, Modal, PageHeader, StatusBadge, Table, Tabs, WaText } from '@/components/ui';
 
 const AUDIENCES = [
   { key: 'active', label: 'All active members' }, { key: 'all', label: 'Everyone' }, { key: 'expiring', label: 'Ending in 7 days' },
@@ -28,12 +28,26 @@ function WaStatus({ t }: { t: any }) {
   return <Badge tone={tone}>{label}</Badge>;
 }
 
+const CATEGORY_LABEL: Record<string, string> = { UTILITY: 'Utility', MARKETING: 'Marketing', AUTHENTICATION: 'Authentication' };
+
+/** The category Meta gave the template. Meta bills marketing messages at a higher rate, so a change from the one chosen here is flagged. */
+function CategoryNote({ t }: { t: any }) {
+  if (!t.wa_category) return null;
+  const same = t.wa_category === t.category;
+  return (
+    <span className="mt-1 flex flex-wrap items-center gap-1.5">
+      <Badge tone={same ? (t.wa_category === 'MARKETING' ? 'amber' : 'green') : 'red'}>Meta: {CATEGORY_LABEL[t.wa_category] ?? t.wa_category}</Badge>
+      {!same && <span className="text-rose text-xs">Meta changed this from {t.category === 'MARKETING' ? 'Marketing' : 'Utility'}{t.wa_category === 'MARKETING' ? ' and bills it at the marketing rate' : ''}</span>}
+    </span>
+  );
+}
+
 function Bubble({ header, body, footer }: { header?: string | null; body: string; footer?: string | null }) {
   return (
     <div className="rounded-xl bg-[#e7ded3] p-3">
       <div className="bg-white rounded-lg rounded-tl-none px-3 py-2 shadow-sm max-w-[340px]">
         {header && <div className="font-semibold text-ink mb-1">{header}</div>}
-        <div className="whitespace-pre-wrap text-ink leading-snug">{body || 'Your message appears here'}</div>
+        <div className="whitespace-pre-wrap text-ink leading-snug">{body ? <WaText text={body} /> : 'Your message appears here'}</div>
         {footer && <div className="text-faint text-xs mt-1">{footer}</div>}
       </div>
     </div>
@@ -49,7 +63,7 @@ function Queue({ d, reload }: { d: any; reload: () => void }) {
       <Table rows={d.queue} empty={<Empty icon={CheckCheck} title="Nothing to send right now" text="Expiry, payment and birthday reminders appear here each day." />}
         cols={[
           { key: 'to_name', label: 'To', render: (r) => <span><span className="block font-medium text-ink">{r.to_name}</span><span className="text-muted text-[13px]">{r.phone ?? r.email}</span></span> },
-          { key: 'body', label: 'Message', render: (r) => <span className="block min-w-64 max-w-md whitespace-normal text-[13px] leading-snug">{r.body}{r.error && <span className="block text-rose mt-1">{r.error}</span>}</span> },
+          { key: 'body', label: 'Message', render: (r) => <span className="block min-w-64 max-w-md whitespace-normal text-[13px] leading-snug"><WaText text={r.body} />{r.error && <span className="block text-rose mt-1">{r.error}</span>}</span> },
           { key: 'status', label: 'Status', render: (r) => <StatusBadge status={r.status} /> },
           { key: 'a', label: '', align: 'right', render: (r) => (
             <span className="inline-flex gap-1.5">
@@ -304,8 +318,8 @@ function Templates({ d, reload, openSetup }: { d: any; reload: () => void; openS
       {!d.channels.whatsapp_api && <p className="mx-4 mb-3 bg-canvas rounded-lg p-3">Connect WhatsApp Business to send templates for approval. <button className="text-brand underline" onClick={openSetup}>Connect now</button></p>}
       <Table rows={d.templates} onRow={setEdit}
         cols={[
-          { key: 'name', label: 'Name', render: (r) => <span><span className="block font-medium text-ink">{r.name}</span><span className="text-muted text-[13px]">{r.category === 'MARKETING' ? 'Greeting or offer' : 'Information'}</span></span> },
-          { key: 'body', label: 'Message', render: (r) => <span className="block min-w-64 max-w-lg whitespace-normal text-[13px] leading-snug">{r.body}{r.wa_rejected_reason && <span className="block text-rose mt-1">Rejected: {r.wa_rejected_reason}</span>}</span> },
+          { key: 'name', label: 'Name', render: (r) => <span><span className="block font-medium text-ink">{r.name}</span><span className="text-muted text-[13px]">{r.category === 'MARKETING' ? 'Greeting or offer' : 'Information'}</span><CategoryNote t={r} /></span> },
+          { key: 'body', label: 'Message', render: (r) => <span className="block min-w-64 max-w-lg whitespace-normal text-[13px] leading-snug"><WaText text={r.body} />{r.wa_rejected_reason && <span className="block text-rose mt-1">Rejected: {r.wa_rejected_reason}</span>}</span> },
           { key: 'wa', label: 'WhatsApp', render: (r) => <WaStatus t={r} /> },
           { key: 'a', label: '', align: 'right', render: (r) => (
             <span className="inline-flex gap-1.5" onClick={(e) => e.stopPropagation()}>
@@ -361,7 +375,9 @@ function History() {
           { key: 'to_name', label: 'To', render: (r) => <span className="font-medium text-ink">{r.to_name}</span> },
           { key: 'channel', label: 'By', render: (r) => <span className="capitalize">{r.channel}</span> },
           { key: 'delivery_status', label: 'Status', render: (r) => r.delivery_status ? <Badge tone={r.delivery_status === 'read' ? 'green' : 'blue'}>{LABEL[r.delivery_status] ?? r.delivery_status}</Badge> : <Badge>Opened by you</Badge> },
-          { key: 'body', label: 'Message', render: (r) => <span className="block min-w-64 max-w-xl whitespace-normal text-[13px] leading-snug">{r.body}</span> },
+          { key: 'billing_category', label: 'Billed as', render: (r) => r.billing_category
+            ? <Badge tone={r.billing_category === 'marketing' ? 'amber' : r.billable === false ? 'gray' : 'green'}>{r.billing_category[0].toUpperCase() + r.billing_category.slice(1)}{r.billable === false ? ' (free)' : ''}</Badge> : <span className="text-muted">—</span> },
+          { key: 'body', label: 'Message', render: (r) => <span className="block min-w-64 max-w-xl whitespace-normal text-[13px] leading-snug"><WaText text={r.body} /></span> },
         ]} />
     </Card>
   );
@@ -377,6 +393,44 @@ function Copyable({ label, value }: { label: string; value: string }) {
         <code className="flex-1 min-w-0 bg-canvas rounded-lg px-3 py-2 text-[13px] break-all">{value}</code>
         <Button size="sm" onClick={() => { navigator.clipboard.writeText(value); toast('Copied'); }}>Copy</Button>
       </div>
+    </div>
+  );
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** What Meta charged for messages, month by month. Saved each time it is read, so it stays as history. */
+function CostHistory() {
+  const { data, error, reload } = useApi('/comms/whatsapp/costs');
+  const [busy, setBusy] = useState(false);
+  if (error) return <ErrorNote message={error} retry={reload} />;
+  if (!data) return null;
+  const money = (n: number, c?: string | null) => (!c || c === 'INR' ? inr(n) : `${c} ${new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(n)}`);
+  const months = [...new Set<string>(data.rows.map((r: any) => r.month))];
+  const refresh = async () => {
+    setBusy(true);
+    try { const r = await api('/comms/whatsapp/costs/sync', { body: {} }); toast(`Costs updated from Meta (${r.days} day${r.days === 1 ? '' : 's'} of charges)`); reload(); }
+    catch (e: any) { toast(e.message, 'error'); reload(); }
+    setBusy(false);
+  };
+  return (
+    <div className="mt-4 pt-4 border-t border-line">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+        <div>
+          <div className="font-semibold text-ink">Message cost</div>
+          <div className="text-muted text-[13px]">{data.synced_at ? `Read from Meta on ${fmtDateTime(data.synced_at)}. Meta can take a day to settle the latest charges.` : 'Not read from Meta yet.'}</div>
+        </div>
+        <Button size="sm" disabled={busy} onClick={refresh}><RefreshCw /> Read from Meta</Button>
+      </div>
+      {data.error && <p className="text-amber text-[13px] mb-2">Last attempt failed: {data.error}</p>}
+      {!months.length ? <p className="text-muted text-[13px]">No charges recorded yet.</p> : (
+        <Table rows={months.map((m) => ({ id: m, month: m, rows: data.rows.filter((r: any) => r.month === m) }))}
+          cols={[
+            { key: 'month', label: 'Month', render: (r) => <span className="font-medium text-ink">{MONTHS[Number(r.month.slice(5)) - 1]} {r.month.slice(0, 4)}</span> },
+            { key: 'cat', label: 'By type', render: (r) => <span className="text-muted text-[13px]">{r.rows.map((x: any) => `${x.category[0].toUpperCase()}${x.category.slice(1)} ${money(x.cost, x.currency)} (${x.volume})`).join(' · ')}</span> },
+            { key: 'total', label: 'Total', align: 'right', render: (r) => <b className="text-ink">{money(r.rows.reduce((a: number, x: any) => a + Number(x.cost), 0), r.rows[0].currency)}</b> },
+          ]} />
+      )}
     </div>
   );
 }
@@ -406,6 +460,7 @@ function Usage() {
         <div><dt className="text-muted text-[13px]">Number quality</dt><dd className="text-ink font-medium">{data.quality_rating ?? '—'}</dd></div>
       </dl>
       {data.error && <p className="text-amber text-[13px] mt-3">Could not reach Meta just now: {data.error}</p>}
+      <CostHistory />
       <div className="mt-4 pt-4 border-t border-line flex flex-wrap items-center gap-3">
         <p className="flex-1 min-w-60 text-muted text-[13px]">Meta does not share your remaining prepaid balance with apps, so it cannot be shown here. Check it in Meta billing. We watch for Meta refusing messages for lack of credit, and warn you here and on the dashboard.</p>
         <Button href={data.billing_url} target="_blank" rel="noreferrer"><ExternalLink /> Check balance in Meta</Button>

@@ -8,6 +8,10 @@ import { useUser } from '@/components/shell';
 
 const INCOME = '#2a78d6';
 const SHOP = '#1f9d8a';
+
+/** Rupees for the usual INR account, otherwise the account's own currency code. */
+const waMoney = (n: number, currency?: string | null) =>
+  !currency || currency === 'INR' ? inr(n) : `${currency} ${new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(Number(n ?? 0))}`;
 const SPENDING = '#eb6834';
 
 function greeting() {
@@ -77,10 +81,14 @@ function OwnerDashboard({ d }: { d: any }) {
         </Card>
       )}
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+      <div className={`grid grid-cols-2 ${k.wa_connected ? 'lg:grid-cols-5' : 'lg:grid-cols-4'} gap-3 mb-4`}>
         <Stat label="Active members" value={k.active_members} hint={`${k.new_week} joined this week · ${k.new_month} this month`} href="/members?status=active" />
         <Stat label="Came in today" value={k.checkins_today} hint={`${k.pt_today} PT sessions booked`} href="/attendance" />
         <Stat label="Collected this month" value={inr(k.collected_month)} hint={`${inr(k.collected_month - k.pos_month)} members · ${inr(k.pos_month)} POS · ${inr(k.collected_today)} today`} href="/billing" />
+        {k.wa_connected && (
+          <Stat label="WhatsApp cost this month" value={waMoney(k.wa_cost_month, k.wa_currency)} href="/messages?tab=setup"
+            hint={k.wa_cost_error && !k.wa_messages_month ? 'Could not read from Meta' : `${waMoney(k.wa_cost_marketing, k.wa_currency)} marketing · ${waMoney(k.wa_cost_utility, k.wa_currency)} utility · ${k.wa_messages_month} messages`} />
+        )}
         <Stat label="Money still due" value={inr(k.dues_total)} hint={`from ${k.members_with_dues} members`} href="/billing?status=due" tone={k.dues_total > 0 ? 'red' : undefined} />
       </div>
 
