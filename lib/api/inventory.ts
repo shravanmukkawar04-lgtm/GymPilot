@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { insert, one, q, tx, update } from '../db';
 import { bad, notFound, parse, route } from './router';
 import * as s from './schemas';
-import { createInvoice, Line } from '../services/billing';
+import { checkPastDate, createInvoice, Line } from '../services/billing';
 
 const productSchema = z.object({
   sku: s.text, name: s.reqText, category: s.reqText, unit: s.text.transform((v) => v ?? 'pcs'), hsn: s.text,
@@ -48,9 +48,12 @@ route('POST', '/products/:id/stock', 'inventory', async ({ params, body, user })
 route('POST', '/products/sell', 'inventory', async ({ body, user }) => {
   const v = parse(z.object({
     member_id: s.idOpt, customer_name: s.text, customer_phone: s.phoneOpt, discount: s.moneyOpt, payment: s.payment,
+    /** Set for an old sale: the bill and its payments are dated this day instead of today. */
+    invoice_date: s.date,
     items: z.array(z.object({ product_id: s.id, qty: z.coerce.number().int().min(1) })).min(1, 'add at least one product'),
   }), body);
   return tx(async (db) => {
+    await checkPastDate(db, v.invoice_date, 'The sale date');
     const member = v.member_id ? await one<any>('SELECT * FROM members WHERE id=$1', [v.member_id], db) : null;
     const lines: Line[] = [];
     let branch: number | null = null;
@@ -65,7 +68,7 @@ route('POST', '/products/sell', 'inventory', async ({ body, user }) => {
     }
     const invoice = await createInvoice(db, {
       member_id: member?.id ?? null, customer_name: member?.name ?? v.customer_name ?? 'Walk-in customer', customer_phone: member?.phone ?? v.customer_phone,
-      items: lines, discount: v.discount ?? 0, payment: v.payment, user_id: user.id, branch_id: branch,
+      items: lines, discount: v.discount ?? 0, payment: v.payment, user_id: user.id, branch_id: branch, invoice_date: v.invoice_date,
     });
     for (const it of v.items) {
       await db.query('UPDATE products SET stock=stock-$2 WHERE id=$1', [it.product_id, it.qty]);

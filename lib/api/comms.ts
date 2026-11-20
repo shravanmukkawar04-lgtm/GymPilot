@@ -4,7 +4,7 @@ import { bad, notFound, parse, route } from './router';
 import * as s from './schemas';
 import { AUTO_VARS, channelStatus, countAudience, flushQueue, processCampaign, queueAudience, runAutomations } from '../services/messaging';
 import {
-  deleteSubmittedTemplate, editSubmittedTemplate, encrypt, listRemoteTemplates, submitTemplate, templateSlug, validateForMeta, verifyConnection, waConfig,
+  deleteSubmittedTemplate, editSubmittedTemplate, encrypt, listRemoteTemplates, liveNumberStatus, submitTemplate, templateSlug, validateForMeta, verifyConnection, waConfig,
 } from '../services/whatsapp';
 
 const templateSchema = z.object({
@@ -160,6 +160,26 @@ async function connectionView(req: Request) {
 }
 
 route('GET', '/comms/whatsapp', 'comms', async ({ req }) => connectionView(req));
+
+/**
+ * Usage and limits for the WhatsApp number. Meta does not let apps read the prepaid balance, so this shows what is available:
+ * the number's quality and daily limit from Meta, how many messages this app sent, and whether Meta recently refused
+ * messages because the balance had run out (error 131042), which is the sign that credit needs adding.
+ */
+route('GET', '/comms/whatsapp/status', 'comms', async () => {
+  const cfg = await waConfig();
+  if (!cfg) return { connected: false };
+  const [live, usage, refused] = await Promise.all([
+    liveNumberStatus(cfg).then((v) => ({ ...v, error: null as string | null })).catch((e) => ({ quality_rating: null, tier: null, limit: null as number | null, error: String(e.message) })),
+    one<any>(`SELECT
+        count(*) FILTER (WHERE sent_at > now() - interval '24 hours') sent_24h,
+        count(*) FILTER (WHERE date_trunc('month', sent_at AT TIME ZONE 'Asia/Kolkata') = date_trunc('month', gym_today()::timestamp)) sent_month,
+        count(*) FILTER (WHERE sent_at AT TIME ZONE 'Asia/Kolkata' >= gym_today()) sent_today
+      FROM messages WHERE channel='whatsapp' AND status='sent' AND wa_message_id IS NOT NULL`),
+    one<any>(`SELECT count(*) n, max(created_at) last_at FROM messages WHERE channel='whatsapp' AND status='failed' AND error LIKE '%131042%' AND created_at > now() - interval '7 days'`),
+  ]);
+  return { connected: true, ...live, ...usage, refused_count: refused?.n ?? 0, refused_last_at: refused?.last_at ?? null, billing_url: 'https://business.facebook.com/billing_hub' };
+});
 
 route('PUT', '/comms/whatsapp', 'settings', async ({ body, req, user }) => {
   const v = parse(z.object({

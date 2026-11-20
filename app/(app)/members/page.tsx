@@ -3,7 +3,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Clock, Download, FileUp, Layers, Loader2, PauseCircle, Plus, Trash2, Users } from 'lucide-react';
 import { api, daysFromToday, downloadCsv, fmtDate, inr, parseCsv, photoUrl, toast, useApi } from '@/lib/client';
-import { Avatar, Badge, Button, Card, Confirm, Empty, ErrorNote, Field, FormModal, Loading, Modal, PageHeader, StatusBadge, Table, Tabs } from '@/components/ui';
+import { Avatar, Badge, Button, Card, Confirm, Empty, ErrorNote, Field, FormModal, Loading, Modal, PageHeader, Stat, StatusBadge, Table, Tabs } from '@/components/ui';
 import { FreezeModal } from '@/components/freeze';
 import { BillSummary, saleFields, slotField, slotLabel, syncPay, toSale } from '@/components/sales';
 import { memberFieldsShared as memberFields } from '@/components/member-fields';
@@ -12,6 +12,7 @@ import { useShell } from '@/components/shell';
 const FILTERS = [
   { key: '', label: 'All' }, { key: 'active', label: 'Active' }, { key: 'expiring', label: 'Ending soon' },
   { key: 'expired', label: 'Expired' }, { key: 'frozen', label: 'On hold' }, { key: 'dues', label: 'Owes money' },
+  { key: 'new_week', label: 'Joined this week' }, { key: 'new_month', label: 'Joined this month' }, { key: 'blocked', label: 'Blocked' }, { key: 'left', label: 'Left' },
 ];
 
 const duration = (r: any) => [r.duration_months && `${r.duration_months} month${r.duration_months > 1 ? 's' : ''}`, r.duration_days && `${r.duration_days} days`].filter(Boolean).join(' ');
@@ -141,7 +142,7 @@ function AddMember({ onClose, onDone }: { onClose: () => void; onDone: (id: numb
       })}
       summary={(v) => (isNew(v) && v.plan_id ? <BillSummary settings={settings.data} gross={price(v)} discount={Number(v.discount) || 0} pay={Number(v.pay_amount) || 0} /> : null)}
       onSubmit={async (v) => {
-        const { kind, plan_id, slot_id, start_date, end_date, discount, pay_amount, pay_method, pay_cash, pay_online_method, pay_reference,
+        const { kind, plan_id, slot_id, start_date, end_date, discount, pay_amount, pay_method, pay_cash, pay_online_method, pay_reference, old_payment, old_date,
           member_code, joined_on, balance_due, send_welcome, ...member } = v;
         const body = kind === 'existing'
           ? { ...member, kind, send_welcome, existing: { member_code, joined_on, plan_id, slot_id, start_date, end_date, balance_due: Number(balance_due) || 0 } }
@@ -271,6 +272,7 @@ function Inner() {
   const [status, setStatus] = useState(sp.get('status') ?? '');
   const [slot, setSlot] = useState('');
   const [plan, setPlan] = useState('');
+  const [gender, setGender] = useState('');
   const [hold, setHold] = useState<any>(null);
   const [q, setQ] = useState('');
   const [term, setTerm] = useState('');
@@ -279,7 +281,7 @@ function Inner() {
   const [importing, setImporting] = useState(false);
   useEffect(() => { const t = setTimeout(() => { setTerm(q); setPage(1); }, 250); return () => clearTimeout(t); }, [q]);
   useEffect(() => { if (sp.get('new') === '1') setAdding(true); }, [sp]);
-  const { data, error, reload } = useApi(`/members?status=${status}&slot_id=${slot}&plan_id=${plan}&q=${encodeURIComponent(term)}&page=${page}`);
+  const { data, error, reload } = useApi(`/members?status=${status}&gender=${gender}&slot_id=${slot}&plan_id=${plan}&q=${encodeURIComponent(term)}&page=${page}`);
   const slots = useApi<any[]>('/slots');
   const plans = useApi<any[]>('/plans');
   const allBranches = shell?.branch_id === null;
@@ -293,6 +295,17 @@ function Inner() {
       </PageHeader>
       <Tabs value={tab} onChange={setTab} tabs={[{ key: 'list', label: 'Members' }, { key: 'plans', label: 'Plans & time slots' }]} />
       {tab === 'plans' ? <PlansTab /> : (
+        <>
+        {data?.counts && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
+            <Stat label="Boys" value={data.counts.male} hint="Current members" active={gender === 'male'} onClick={() => { setGender(gender === 'male' ? '' : 'male'); setPage(1); }} />
+            <Stat label="Girls" value={data.counts.female} hint="Current members" active={gender === 'female'} onClick={() => { setGender(gender === 'female' ? '' : 'female'); setPage(1); }} />
+            <Stat label="Joined this week" value={data.counts.new_week} hint="Since Monday" active={status === 'new_week'} onClick={() => { setStatus(status === 'new_week' ? '' : 'new_week'); setPage(1); }} />
+            <Stat label="Joined this month" value={data.counts.new_month} active={status === 'new_month'} onClick={() => { setStatus(status === 'new_month' ? '' : 'new_month'); setPage(1); }} />
+            <Stat label="Left" value={data.counts.left} hint="History is kept" active={status === 'left'} onClick={() => { setStatus(status === 'left' ? '' : 'left'); setPage(1); }} />
+            <Stat label="Blocked" value={data.counts.blocked} tone={data.counts.blocked > 0 ? 'red' : undefined} hint="Cannot enter" active={status === 'blocked'} onClick={() => { setStatus(status === 'blocked' ? '' : 'blocked'); setPage(1); }} />
+          </div>
+        )}
         <Card pad={false}>
           <div className="p-3 flex flex-wrap items-center gap-2 border-b border-line">
             <input className="input sm:max-w-xs" placeholder="Search name, phone or member ID" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search members" />
@@ -308,6 +321,7 @@ function Inner() {
                 {slots.data.map((s) => <option key={s.id} value={s.id}>{slotLabel(s)}</option>)}
               </select>
             )}
+            {gender && <button className="h-8 px-3 rounded-full text-[13px] font-medium bg-ink text-white" onClick={() => { setGender(''); setPage(1); }}>{gender === 'male' ? 'Boys' : 'Girls'} ✕</button>}
             <div className="flex gap-1 overflow-x-auto">
               {FILTERS.map((f) => (
                 <button key={f.key} onClick={() => { setStatus(f.key); setPage(1); }} className={`h-8 px-3 rounded-full whitespace-nowrap text-[13px] font-medium ${status === f.key ? 'bg-ink text-white' : 'bg-canvas text-muted hover:text-ink'}`}>
@@ -319,7 +333,7 @@ function Inner() {
           {error ? <div className="p-4"><ErrorNote message={error} retry={reload} /></div> : !data ? <Loading /> : (
             <>
               <Table rows={data.rows} onRow={(r) => router.push(`/members/${r.id}`)}
-                empty={<Empty icon={Users} title={term || status || slot || plan ? 'No members match this filter' : 'No members yet'} text={term || status || slot || plan ? 'Try another search or filter.' : 'Add your first member, or import everyone from your old software.'} action={!term && !status && !slot && !plan && !allBranches ? <Button variant="primary" onClick={() => setAdding(true)}>Add member</Button> : undefined} />}
+                empty={<Empty icon={Users} title={term || status || slot || plan || gender ? 'No members match this filter' : 'No members yet'} text={term || status || slot || plan || gender ? 'Try another search or filter.' : 'Add your first member, or import everyone from your old software.'} action={!term && !status && !slot && !plan && !gender && !allBranches ? <Button variant="primary" onClick={() => setAdding(true)}>Add member</Button> : undefined} />}
                 cols={[
                   { key: 'name', label: 'Member', render: (r) => <span className="flex items-center gap-2.5"><Avatar name={r.name} src={photoUrl('member', r.id, r.photo_v)} /><span><span className="block font-medium text-ink">{r.name}</span><span className="text-muted text-[13px]">{r.member_code} · {r.phone}</span></span></span> },
                   ...(allBranches ? [{ key: 'branch_name', label: 'Branch' }] : []),
@@ -342,6 +356,7 @@ function Inner() {
             </>
           )}
         </Card>
+        </>
       )}
       {adding && !allBranches && <AddMember onClose={() => setAdding(false)} onDone={(id) => router.push(`/members/${id}`)} />}
       {hold && <FreezeModal member={hold} onClose={() => setHold(null)} onDone={reload} />}

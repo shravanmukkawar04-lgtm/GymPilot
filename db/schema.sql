@@ -501,8 +501,15 @@ ALTER TABLE messages
 CREATE INDEX IF NOT EXISTS messages_wa_idx ON messages(wa_message_id);
 CREATE INDEX IF NOT EXISTS messages_campaign_idx ON messages(campaign_id, status);
 
+-- A blocked member cannot enter; a member who has left is no longer a current member.
+ALTER TABLE members ADD COLUMN IF NOT EXISTS blocked boolean NOT NULL DEFAULT false;
+ALTER TABLE members ADD COLUMN IF NOT EXISTS blocked_reason text;
+ALTER TABLE members ADD COLUMN IF NOT EXISTS blocked_on date;
+ALTER TABLE members ADD COLUMN IF NOT EXISTS left_on date;
+ALTER TABLE members ADD COLUMN IF NOT EXISTS left_reason text;
+
 CREATE OR REPLACE FUNCTION membership_valid(p_member int, p_day date) RETURNS boolean LANGUAGE sql STABLE AS $$
-  SELECT EXISTS (
+  SELECT NOT EXISTS (SELECT 1 FROM members mb WHERE mb.id = p_member AND (mb.blocked OR mb.left_on IS NOT NULL)) AND EXISTS (
     SELECT 1 FROM memberships ms
     WHERE ms.member_id = p_member AND ms.status = 'active'
       AND p_day BETWEEN ms.start_date AND ms.end_date
@@ -795,6 +802,8 @@ SELECT m.*,
   cur.id AS membership_id, cur.plan_name, cur.start_date, cur.end_date,
   lim.valid_until,
   CASE
+    WHEN m.left_on IS NOT NULL THEN 'left'
+    WHEN m.blocked THEN 'blocked'
     WHEN cur.id IS NULL THEN 'none'
     WHEN cur.start_date <= gym_today() AND cur.end_date >= gym_today() AND EXISTS (
       SELECT 1 FROM membership_freezes f WHERE f.membership_id = cur.id AND gym_today() BETWEEN f.start_date AND f.end_date) THEN 'frozen'

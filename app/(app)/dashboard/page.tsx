@@ -7,6 +7,7 @@ import { Avatar, Badge, Button, Card, Empty, ErrorNote, Loading, Stat, StatusBad
 import { useUser } from '@/components/shell';
 
 const INCOME = '#2a78d6';
+const SHOP = '#1f9d8a';
 const SPENDING = '#eb6834';
 
 function greeting() {
@@ -45,12 +46,15 @@ function OwnerDashboard({ d }: { d: any }) {
     { n: k.expiring_7, icon: RefreshCw, one: 'membership ends in the next 7 days', many: 'memberships end in the next 7 days', action: 'Renew', href: '/members?status=expiring' },
     { n: k.members_with_dues, icon: ReceiptText, one: `member owes money (${inr(k.dues_total)})`, many: `members owe money (${inr(k.dues_total)} in total)`, action: 'Collect', href: '/billing?status=due' },
     { n: k.followups_due, icon: PhoneCall, one: 'enquiry needs a follow-up call', many: 'enquiries need a follow-up call', action: 'Call', href: '/leads' },
+    { n: k.wa_no_credit, icon: MessageCircle, one: 'WhatsApp message was refused because Meta credit ran out', many: 'WhatsApp messages were refused because Meta credit ran out', action: 'Check', href: '/messages?tab=setup' },
     { n: k.messages_queued, icon: MessageCircle, one: 'reminder is ready to send', many: 'reminders are ready to send', action: 'Send', href: '/messages' },
     { n: k.flagged_today, icon: AlertTriangle, one: 'person entered today without a valid membership', many: 'people entered today without a valid membership', action: 'Review', href: '/attendance' },
     { n: k.inactive, icon: UserX, one: 'active member has stopped coming', many: 'active members have stopped coming', action: 'View', href: '/members?status=inactive' },
     { n: k.low_stock, icon: Package, one: 'product is running low', many: 'products are running low', action: 'Restock', href: '/inventory' },
     { n: k.unmatched, icon: Fingerprint, one: 'fingerprint is not linked to anyone', many: 'fingerprints are not linked to anyone', action: 'Link', href: '/attendance?tab=unmatched' },
   ].filter((t) => t.n > 0).map((t) => ({ ...t, text: t.n === 1 ? t.one : t.many }));
+  // Membership money is everything collected that is not a shop sale.
+  const chart = d.chart.map((c: any) => ({ ...c, members: Math.max(0, Math.round((c.income - c.pos) * 100) / 100) }));
   const setupDone = SETUP.filter((s) => d.setup[s.key]).length;
 
   return (
@@ -74,9 +78,9 @@ function OwnerDashboard({ d }: { d: any }) {
       )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-        <Stat label="Active members" value={k.active_members} hint={`${k.new_month} joined this month`} href="/members?status=active" />
+        <Stat label="Active members" value={k.active_members} hint={`${k.new_week} joined this week · ${k.new_month} this month`} href="/members?status=active" />
         <Stat label="Came in today" value={k.checkins_today} hint={`${k.pt_today} PT sessions booked`} href="/attendance" />
-        <Stat label="Collected this month" value={inr(k.collected_month)} hint={`${inr(k.collected_today)} today`} href="/billing" />
+        <Stat label="Collected this month" value={inr(k.collected_month)} hint={`${inr(k.collected_month - k.pos_month)} members · ${inr(k.pos_month)} POS · ${inr(k.collected_today)} today`} href="/billing" />
         <Stat label="Money still due" value={inr(k.dues_total)} hint={`from ${k.members_with_dues} members`} href="/billing?status=due" tone={k.dues_total > 0 ? 'red' : undefined} />
       </div>
 
@@ -97,16 +101,17 @@ function OwnerDashboard({ d }: { d: any }) {
             </ul>}
         </Card>
 
-        <Card title="Money in and out" subtitle="Last 6 months. Spending includes salaries paid." className="lg:col-span-3">
+        <Card title="Money in and out" subtitle="Last 6 months. Collected is split into membership and other bills, and shop (POS) sales. Spending includes salaries paid." className="lg:col-span-3">
           <div className="h-[260px]">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={d.chart} barGap={2} barCategoryGap="28%" margin={{ left: 0, right: 4, top: 4 }}>
+              <BarChart data={chart} barGap={2} barCategoryGap="28%" margin={{ left: 0, right: 4, top: 4 }}>
                 <CartesianGrid vertical={false} stroke="#eceeec" />
                 <XAxis dataKey="label" tickLine={false} axisLine={{ stroke: '#d5d9d4' }} tick={{ fill: '#626c76', fontSize: 12 }} />
                 <YAxis tickLine={false} axisLine={false} width={48} tick={{ fill: '#626c76', fontSize: 12 }} tickFormatter={(v) => (v >= 100000 ? `${(v / 100000).toFixed(1)}L` : v >= 1000 ? `${Math.round(v / 1000)}k` : v)} />
                 <Tooltip content={<ChartTip />} cursor={{ fill: 'rgba(19,26,34,0.04)' }} />
                 <Legend iconType="square" iconSize={10} wrapperStyle={{ fontSize: 13, color: '#626c76' }} />
-                <Bar dataKey="income" name="Collected" fill={INCOME} radius={[4, 4, 0, 0]} maxBarSize={22} />
+                <Bar dataKey="members" name="Collected: members" stackId="in" fill={INCOME} maxBarSize={22} />
+                <Bar dataKey="pos" name="Collected: POS" stackId="in" fill={SHOP} radius={[4, 4, 0, 0]} maxBarSize={22} />
                 <Bar dataKey="spending" name="Spent" fill={SPENDING} radius={[4, 4, 0, 0]} maxBarSize={22} />
               </BarChart>
             </ResponsiveContainer>

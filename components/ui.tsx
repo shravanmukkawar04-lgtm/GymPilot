@@ -45,7 +45,7 @@ export function Badge({ tone = 'gray', children }: { tone?: string; children: Re
 }
 
 const STATUS: Record<string, [string, string]> = {
-  active: ['green', 'Active'], expired: ['red', 'Expired'], frozen: ['blue', 'On hold'], upcoming: ['blue', 'Starts soon'], none: ['gray', 'No plan'],
+  active: ['green', 'Active'], expired: ['red', 'Expired'], frozen: ['blue', 'On hold'], upcoming: ['blue', 'Starts soon'], none: ['gray', 'No plan'], blocked: ['red', 'Blocked'], left: ['gray', 'Left'],
   paid: ['green', 'Paid'], partial: ['amber', 'Part paid'], unpaid: ['red', 'Not paid'], cancelled: ['gray', 'Cancelled'], pending: ['amber', 'Not paid yet'],
   scheduled: ['blue', 'Booked'], completed: ['green', 'Done'], no_show: ['red', 'Did not come'],
   queued: ['amber', 'Ready to send'], sent: ['green', 'Sent'], failed: ['red', 'Failed'],
@@ -101,7 +101,7 @@ export function PageHeader({ title, help, children }: { title: string; help: str
   );
 }
 
-export function Stat({ label, value, hint, href, tone }: { label: string; value: ReactNode; hint?: ReactNode; href?: string; tone?: 'red' | 'amber' }) {
+export function Stat({ label, value, hint, href, tone, onClick, active }: { label: string; value: ReactNode; hint?: ReactNode; href?: string; tone?: 'red' | 'amber'; onClick?: () => void; active?: boolean }) {
   const body = (
     <>
       <div className="text-muted text-[13px]">{label}</div>
@@ -109,7 +109,8 @@ export function Stat({ label, value, hint, href, tone }: { label: string; value:
       {hint && <div className="text-faint text-xs mt-1">{hint}</div>}
     </>
   );
-  const cls = 'block bg-surface border border-line rounded-xl p-4';
+  const cls = `block w-full text-left bg-surface border rounded-xl p-4 ${active ? 'border-brand ring-1 ring-brand' : 'border-line'}`;
+  if (onClick) return <button type="button" onClick={onClick} aria-pressed={!!active} className={`${cls} hover:border-brand transition-colors`}>{body}</button>;
   return href ? <Link href={href} className={`${cls} hover:border-brand transition-colors`}>{body}</Link> : <div className={cls}>{body}</div>;
 }
 
@@ -227,7 +228,7 @@ export type Field = {
   name: string; label: string;
   /** checks = several checkboxes (value is a list), choice = buttons to pick one, photo = camera or file */
   type?: 'text' | 'number' | 'date' | 'datetime-local' | 'time' | 'tel' | 'email' | 'password' | 'select' | 'textarea' | 'checkbox' | 'member' | 'section' | 'checks' | 'choice' | 'photo';
-  options?: Dyn<Opt[]>; required?: Dyn<boolean>; help?: Dyn<string | undefined>; placeholder?: string; full?: boolean; min?: number; step?: string;
+  options?: Dyn<Opt[]>; required?: Dyn<boolean>; help?: Dyn<string | undefined>; placeholder?: string; full?: boolean; min?: number; max?: string | (() => string); step?: string;
   show?: (v: any) => boolean;
   /** For photo fields: the URL of the photo already saved. */
   current?: (v: any) => string | null;
@@ -306,7 +307,7 @@ function FieldInput({ f, v, set, values }: { f: Field; v: any; set: (val: any) =
   if (f.type === 'photo') return <PhotoInput value={v} current={f.current?.(values)} name={values.name} onChange={set} />;
   if (f.type === 'textarea') return <textarea {...common} rows={3} className="input" value={v ?? ''} onChange={(e) => set(e.target.value)} />;
   if (f.type === 'member') return <MemberPicker value={v} required={required} onChange={(id) => set(id)} />;
-  return <input {...common} className="input" type={f.type ?? 'text'} min={f.min} step={f.step ?? (f.type === 'number' ? 'any' : undefined)} value={v ?? ''} onChange={(e) => set(e.target.value)} />;
+  return <input {...common} className="input" type={f.type ?? 'text'} min={f.min} max={typeof f.max === 'function' ? f.max() : f.max} step={f.step ?? (f.type === 'number' ? 'any' : undefined)} value={v ?? ''} onChange={(e) => set(e.target.value)} />;
 }
 
 export function FormFields({ fields, values, set }: { fields: Field[]; values: any; set: (name: string, val: any) => void }) {

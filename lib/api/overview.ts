@@ -87,6 +87,9 @@ route('POST', '/auth/password', 'any', async ({ body, user }) => {
 
 /* ---------- Dashboard ---------- */
 
+// The part of a payment that is for shop (POS) products: a bill's payment is split by how much of the bill is products.
+const SHOP_SHARE = `COALESCE((SELECT sum(ii.amount) FILTER (WHERE ii.item_type='product') / NULLIF(sum(ii.amount), 0) FROM invoice_items ii WHERE ii.invoice_id = p.invoice_id), 0)`;
+
 route('GET', '/dashboard', 'dashboard', async ({ user }) => {
   if (!can(user.role, 'billing')) return trainerDashboard(user.staff_id ?? -1);
   // A savepoint, so a failure here cannot spoil the rest of the request.
@@ -98,21 +101,26 @@ route('GET', '/dashboard', 'dashboard', async ({ user }) => {
       (SELECT count(*) FROM attendance WHERE day=gym_today() AND member_id IS NOT NULL) checkins_today,
       (SELECT COALESCE(sum(amount),0) FROM payments WHERE NOT voided AND paid_on=gym_today()) collected_today,
       (SELECT COALESCE(sum(amount),0) FROM payments WHERE NOT voided AND date_trunc('month',paid_on)=date_trunc('month',gym_today()::timestamp)) collected_month,
+      (SELECT COALESCE(round(sum(p.amount * ${SHOP_SHARE}), 2),0) FROM payments p WHERE NOT p.voided AND p.paid_on=gym_today()) pos_today,
+      (SELECT COALESCE(round(sum(p.amount * ${SHOP_SHARE}), 2),0) FROM payments p WHERE NOT p.voided AND date_trunc('month',p.paid_on)=date_trunc('month',gym_today()::timestamp)) pos_month,
+      (SELECT count(*) FROM members WHERE NOT archived AND left_on IS NULL AND joined_on >= date_trunc('week',gym_today()::timestamp)::date) new_week,
       (SELECT COALESCE(sum(amount),0) FROM expenses WHERE date_trunc('month',expense_date)=date_trunc('month',gym_today()::timestamp)) expenses_month,
       (SELECT COALESCE(sum(balance),0) FROM invoices WHERE status IN ('unpaid','partial')) dues_total,
-      (SELECT count(*) FROM members WHERE NOT archived AND date_trunc('month',joined_on)=date_trunc('month',gym_today()::timestamp)) new_month,
+      (SELECT count(*) FROM members WHERE NOT archived AND left_on IS NULL AND date_trunc('month',joined_on)=date_trunc('month',gym_today()::timestamp)) new_month,
       (SELECT count(*) FROM member_overview WHERE NOT archived AND valid_until BETWEEN gym_today() AND gym_today()+7) expiring_7,
       (SELECT count(*) FROM member_overview WHERE NOT archived AND status='expired' AND end_date >= gym_today()-30) expired_30,
       (SELECT count(*) FROM member_overview WHERE NOT archived AND dues > 0) members_with_dues,
       (SELECT count(*) FROM leads WHERE next_followup <= gym_today() AND status NOT IN ('won','lost')) followups_due,
       (SELECT count(*) FROM products WHERE active AND stock <= reorder_level) low_stock,
       (SELECT count(*) FROM messages WHERE status='queued') messages_queued,
+      (SELECT count(*) FROM messages WHERE status='failed' AND channel='whatsapp' AND error LIKE '%131042%' AND created_at > now() - interval '3 days') wa_no_credit,
       (SELECT count(DISTINCT device_user_id) FROM biometric_punches WHERE result='unknown') unmatched,
       (SELECT count(*) FROM attendance WHERE day=gym_today() AND NOT membership_ok) flagged_today,
       (SELECT count(*) FROM member_overview WHERE NOT archived AND status='active' AND COALESCE(last_visit, joined_on) < gym_today() - (SELECT inactive_days FROM settings)) inactive,
       (SELECT count(*) FROM pt_sessions WHERE status='scheduled' AND (scheduled_at AT TIME ZONE 'Asia/Kolkata')::date = gym_today()) pt_today`),
     q(`SELECT to_char(m,'Mon') label, to_char(m,'YYYY-MM') AS month_key,
         COALESCE((SELECT sum(amount) FROM payments WHERE NOT voided AND date_trunc('month',paid_on)=m),0) income,
+        COALESCE((SELECT round(sum(p.amount * ${SHOP_SHARE}), 2) FROM payments p WHERE NOT p.voided AND date_trunc('month',p.paid_on)=m),0) pos,
         COALESCE((SELECT sum(amount) FROM expenses WHERE date_trunc('month',expense_date)=m),0)
          + COALESCE((SELECT sum(net_pay) FROM payroll_items WHERE status='paid' AND date_trunc('month',paid_on)=m),0) spending
        FROM generate_series(date_trunc('month',gym_today()::timestamp) - interval '5 months', date_trunc('month',gym_today()::timestamp), interval '1 month') m ORDER BY m`),

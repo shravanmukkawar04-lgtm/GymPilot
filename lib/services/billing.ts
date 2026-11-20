@@ -44,6 +44,13 @@ function financialYear(date: string) {
   return `${String(start).slice(2)}-${String(start + 1).slice(2)}`;
 }
 
+/** An old payment can be any past day, but not a future one. Blank means today. */
+export async function checkPastDate(db: Db, date: string | null | undefined, what = 'The payment date') {
+  if (!date) return;
+  const today = (await one<{ d: string }>('SELECT gym_today() d', [], db))!.d;
+  if (date > today) throw bad(`${what} cannot be in the future`);
+}
+
 export async function createInvoice(db: Db, input: {
   member_id?: number | null; customer_name: string; customer_phone?: string | null;
   items: Line[]; discount?: number | null; invoice_date?: string | null; due_date?: string | null; notes?: string | null;
@@ -75,7 +82,10 @@ export async function createInvoice(db: Db, input: {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
       [inv.id, it.type ?? 'other', it.ref_id ?? null, it.description, it.sac, it.qty, it.rate, rupees(it.discountP), rupees(it.taxableP), it.gst_rate, rupees(it.cgstP), rupees(it.sgstP), rupees(it.amountP)]);
   }
-  await addPayments(db, inv.id, input.payment, input.user_id);
+  // A bill dated in the past is an old payment: its money counts on that day unless a payment has its own date.
+  const dated = (Array.isArray(input.payment) ? input.payment : input.payment ? [input.payment] : [])
+    .map((p) => ({ ...p, paid_on: p.paid_on ?? (input.invoice_date || null) }));
+  await addPayments(db, inv.id, dated, input.user_id);
   return inv;
 }
 
@@ -157,6 +167,8 @@ export const slotLabel = (s: { name: string; start_time: string; end_time: strin
 export async function sellMembership(db: Db, input: {
   member_id: number; plan_id: number; slot_id?: number | null; start_date?: string | null; discount?: number | null;
   replace_current?: boolean; payment?: PaymentInput | PaymentInput[] | null; user_id?: number | null;
+  /** The date of an old bill and its payments. Blank = today. */
+  invoice_date?: string | null;
 }) {
   const member = await one<any>('SELECT * FROM member_overview WHERE id=$1', [input.member_id], db);
   if (!member) throw notFound('Member not found');
@@ -164,6 +176,7 @@ export async function sellMembership(db: Db, input: {
   if (!plan) throw notFound('Plan not found');
   if (plan.branch_id !== member.branch_id) throw bad('This plan belongs to a different branch from the member');
   const slot = await pickSlot(db, plan, input.slot_id, member.branch_id);
+  await checkPastDate(db, input.invoice_date);
 
   if (input.replace_current) {
     await db.query(`UPDATE memberships SET status='cancelled' WHERE member_id=$1 AND status='active' AND end_date >= gym_today()`, [input.member_id]);
@@ -178,7 +191,7 @@ export async function sellMembership(db: Db, input: {
   const invoice = await createInvoice(db, {
     member_id: member.id, customer_name: member.name, customer_phone: member.phone,
     items: [{ description: `${plan.name} membership${slot ? `, ${slotLabel(slot)}` : ''} (${dmy(ms.start_date)} to ${dmy(ms.end_date)})`, qty: 1, rate: plan.price, type: 'membership', ref_id: ms.id }],
-    discount: input.discount, payment: input.payment, user_id: input.user_id,
+    discount: input.discount, payment: input.payment, user_id: input.user_id, invoice_date: input.invoice_date,
   });
   await db.query('UPDATE memberships SET invoice_id=$2 WHERE id=$1', [ms.id, invoice.id]);
   return { membership: ms, invoice };

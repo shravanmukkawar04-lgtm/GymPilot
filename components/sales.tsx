@@ -1,5 +1,5 @@
 'use client';
-import { api, billTotal, inr, useApi, toast } from '@/lib/client';
+import { api, billTotal, inr, todayIST, useApi, toast } from '@/lib/client';
 import { Field, FormModal, paymentFields, syncMixed, toPayment } from './ui';
 
 export function planLabel(p: any) {
@@ -33,6 +33,8 @@ export function BillSummary({ settings, gross, discount, pay }: { settings: any;
 /** Keeps "amount received" equal to the bill total while the plan or discount changes. */
 export const syncPay = (settings: any, price: (v: any) => number) => (name: string, v: any) => {
   const extra = syncMixed(name, v);
+  // An old payment usually belongs to a plan that began the same day, so offer that as the start date.
+  if (name === 'old_date' && v.old_date && !v.start_date) Object.assign(extra, { start_date: v.old_date });
   if (['plan_id', 'package_id', 'discount'].includes(name)) return { ...extra, pay_amount: billTotal(settings, price(v), Number(v.discount) || 0) };
   return extra;
 };
@@ -62,10 +64,20 @@ export function saleFields(plans: any[], slots: any[] = []): Field[] {
     { name: 'start_date', label: 'Start date', type: 'date', help: 'Leave blank to start today or after the current plan ends.' },
     { name: 'discount', label: 'Discount (₹)', type: 'number', min: 0 },
     ...paymentFields,
+    ...oldPaymentFields,
   ];
 }
 
-export const toSale = (v: any) => ({ plan_id: v.plan_id, slot_id: v.slot_id || null, start_date: v.start_date, discount: Number(v.discount) || 0, payment: toPayment(v) });
+/** Lets a payment that was really received earlier be recorded on its own date, so past income lands on the right day. */
+export const oldPaymentFields: Field[] = [
+  { name: 'old_payment', label: 'This is an old payment', type: 'checkbox', help: 'Tick it if the money was already received on an earlier date. The bill and payment are dated that day.' },
+  { name: 'old_date', label: 'Payment date', type: 'date', max: todayIST, required: (v) => !!v.old_payment, show: (v) => !!v.old_payment, help: 'The day the money was received. It cannot be a future date.' },
+];
+
+export const toSale = (v: any) => ({
+  plan_id: v.plan_id, slot_id: v.slot_id || null, start_date: v.start_date, discount: Number(v.discount) || 0, payment: toPayment(v),
+  invoice_date: v.old_payment && v.old_date ? v.old_date : null,
+});
 
 export function MembershipSale({ member, credit, onClose, onDone }: { member: any; credit?: number; onClose: () => void; onDone: () => void }) {
   // Only this member's branch's plans and slots, even when the owner is looking at all branches.

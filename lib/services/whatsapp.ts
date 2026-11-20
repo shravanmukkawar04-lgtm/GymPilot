@@ -58,6 +58,19 @@ export async function verifyConnection(phoneId: string, wabaId: string, token: s
   return { display_phone: info.display_phone_number as string, verified_name: info.verified_name as string, quality_rating: (info.quality_rating ?? null) as string | null };
 }
 
+/**
+ * What Meta tells us about the number right now: quality and how many people it may message in 24 hours.
+ * Meta has no way to read the prepaid credit balance through the API, so the balance itself is not here.
+ */
+export async function liveNumberStatus(cfg: WaConfig) {
+  const info = await graph(`/${cfg.phone_id}?fields=quality_rating,messaging_limit_tier`, cfg.token)
+    // An account that does not offer the limit field still answers for quality.
+    .catch(() => graph(`/${cfg.phone_id}?fields=quality_rating`, cfg.token));
+  const tier = (info.messaging_limit_tier ?? null) as string | null;
+  const limit = tier === 'TIER_UNLIMITED' ? null : Number((tier ?? '').match(/^TIER_(\d+)(K)?$/)?.[1] ?? 0) * (tier?.endsWith('K') ? 1000 : 1) || null;
+  return { quality_rating: (info.quality_rating ?? null) as string | null, tier, limit };
+}
+
 /* ---------- Templates ---------- */
 
 const VAR = /\{\{\s*(\w+)\s*\}\}/g;

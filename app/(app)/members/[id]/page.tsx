@@ -2,23 +2,27 @@
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useState } from 'react';
-import { ArrowLeft, Fingerprint, MessageCircle, PauseCircle, Pencil, RefreshCw, Repeat } from 'lucide-react';
+import { ArrowLeft, ArrowRightLeft, Ban, Fingerprint, LogOut, MessageCircle, PauseCircle, Pencil, RefreshCw, Repeat, Undo2 } from 'lucide-react';
 import { api, daysFromToday, fmtDate, fmtTime, inr, photoUrl, todayIST, toast, useApi, waLink } from '@/lib/client';
 import { Avatar, Badge, Button, Card, Confirm, Empty, ErrorNote, FormModal, Loading, StatusBadge, Table, Tabs } from '@/components/ui';
 import { MembershipSale } from '@/components/sales';
 import { FreezeModal } from '@/components/freeze';
 import { memberFieldsShared } from '@/components/member-fields';
+import { useShell, useUser } from '@/components/shell';
 
 export default function MemberPage() {
   const { id } = useParams<{ id: string }>();
   const { data, error, reload } = useApi(`/members/${id}`);
   const [tab, setTab] = useState('plans');
   const [modal, setModal] = useState<string | null>(null);
+  const user = useUser();
+  const shell = useShell();
   if (error) return <ErrorNote message={error} retry={reload} />;
   if (!data) return <Loading />;
   const m = data.member;
   const current = data.memberships.find((x: any) => x.id === m.membership_id);
   const left = daysFromToday(m.valid_until);
+  const otherBranches: { id: number; name: string }[] = (shell?.branches ?? []).filter((b: any) => b.id !== m.branch_id);
 
   const credit = (() => {
     if (!current || m.status !== 'active') return 0;
@@ -70,6 +74,18 @@ export default function MemberPage() {
           <div><div className="text-muted text-[13px]">Money due</div><div className={`font-medium mt-0.5 ${m.dues > 0 ? 'text-rose' : 'text-ink'}`}>{inr(m.dues)}</div></div>
         </div>
         {m.health_notes && <div className="mt-4 bg-amber-soft text-amber rounded-lg px-3 py-2"><b>Health note:</b> {m.health_notes}</div>}
+        {m.left_on && (
+          <div className="mt-4 bg-canvas rounded-lg px-3 py-2 flex flex-wrap items-center gap-2">
+            <span className="flex-1 min-w-48"><b className="text-ink">Left on {fmtDate(m.left_on)}.</b> {m.left_reason ?? ''}</span>
+            <Button size="sm" onClick={() => setModal('rejoin')}><Undo2 /> Rejoined</Button>
+          </div>
+        )}
+        {m.blocked && !m.left_on && (
+          <div className="mt-4 bg-rose-soft text-rose rounded-lg px-3 py-2 flex flex-wrap items-center gap-2">
+            <span className="flex-1 min-w-48"><b>Blocked{m.blocked_on ? ` since ${fmtDate(m.blocked_on)}` : ''}.</b> {m.blocked_reason ?? ''} Entry is flagged until you unblock them.</span>
+            <Button size="sm" onClick={() => setModal('unblock')}>Unblock</Button>
+          </div>
+        )}
       </Card>
 
       <Tabs value={tab} onChange={setTab} tabs={[
@@ -145,7 +161,14 @@ export default function MemberPage() {
               <div key={k as string}><dt className="text-muted text-[13px]">{k}</dt><dd className="text-ink">{v ?? '—'}</dd></div>
             ))}
           </dl>
-          <div className="mt-4 pt-4 border-t border-line"><Button variant="danger" onClick={() => setModal('archive')}>Remove member</Button></div>
+          <div className="mt-4 pt-4 border-t border-line flex flex-wrap gap-2">
+            {!m.left_on && (m.blocked
+              ? <Button onClick={() => setModal('unblock')}><Undo2 /> Unblock</Button>
+              : <Button onClick={() => setModal('block')}><Ban /> Block member</Button>)}
+            {m.left_on ? <Button onClick={() => setModal('rejoin')}><Undo2 /> Mark as rejoined</Button> : <Button onClick={() => setModal('left')}><LogOut /> Mark as left</Button>}
+            {user?.role === 'owner' && otherBranches.length > 0 && <Button onClick={() => setModal('transfer')}><ArrowRightLeft /> Move to another branch</Button>}
+            <Button variant="danger" onClick={() => setModal('archive')}>Remove member</Button>
+          </div>
         </Card>
       )}
 
@@ -154,6 +177,24 @@ export default function MemberPage() {
       {modal === 'edit' && <FormModal wide title="Edit member" fields={memberFieldsShared} initial={{ ...m, photo: undefined }} onClose={() => setModal(null)}
         onSubmit={async (v) => { await api(`/members/${m.id}`, { method: 'PUT', body: v }); toast('Saved'); reload(); }} />}
       {modal === 'freeze' && <FreezeModal member={m} onClose={() => setModal(null)} onDone={reload} />}
+      {modal === 'block' && <FormModal title={`Block ${m.name}?`} subtitle="Their scans and check-ins will be flagged as not valid until you unblock them." submitLabel="Block member" initial={{}} onClose={() => setModal(null)}
+        fields={[{ name: 'reason', label: 'Reason', type: 'textarea', required: true, placeholder: 'For example: unpaid dues, misbehaviour' }]}
+        onSubmit={async (v) => { await api(`/members/${m.id}/block`, { body: { blocked: true, reason: v.reason } }); toast('Member blocked'); reload(); }} />}
+      {modal === 'unblock' && <Confirm title={`Unblock ${m.name}?`} text="They can enter again as long as their membership is valid." confirmLabel="Unblock"
+        onClose={() => setModal(null)} onConfirm={async () => { await api(`/members/${m.id}/block`, { body: { blocked: false } }); toast('Member unblocked'); reload(); }} />}
+      {modal === 'left' && <FormModal title={`Mark ${m.name} as left?`} subtitle="They move out of your everyday member list. Bills and history are kept, and you can mark them as rejoined later." submitLabel="Mark as left"
+        initial={{ left_on: todayIST() }} onClose={() => setModal(null)}
+        fields={[
+          { name: 'left_on', label: 'Date they left', type: 'date', required: true, max: todayIST },
+          { name: 'reason', label: 'Reason (optional)', type: 'textarea', placeholder: 'Moved city, joined another gym…' },
+        ]}
+        onSubmit={async (v) => { await api(`/members/${m.id}/left`, { body: { left: true, left_on: v.left_on, reason: v.reason } }); toast('Marked as left'); reload(); }} />}
+      {modal === 'rejoin' && <Confirm title={`${m.name} has rejoined?`} text="They go back to your member list. Renew their membership if it has ended." confirmLabel="Mark as rejoined"
+        onClose={() => setModal(null)} onConfirm={async () => { await api(`/members/${m.id}/left`, { body: { left: false } }); toast('Back in your member list'); reload(); }} />}
+      {modal === 'transfer' && <FormModal title={`Move ${m.name} to another branch`} submitLabel="Move member" initial={{}} onClose={() => setModal(null)}
+        subtitle="Their membership dates move with them. The old plan and time slot do not, so pick the new branch's plan when you renew. Old bills and visits stay in the branch where they happened. Their fingerprint number is removed, so register their finger again at the new branch."
+        fields={[{ name: 'branch_id', label: 'Move to', type: 'select', required: true, full: true, options: otherBranches.map((b) => ({ value: b.id, label: b.name })) }]}
+        onSubmit={async (v) => { const r = await api(`/members/${m.id}/transfer`, { body: { branch_id: Number(v.branch_id) } }); toast(`Moved to ${r.branch_name}`); window.location.href = '/members'; }} />}
       {modal === 'archive' && <Confirm danger title={`Remove ${m.name}?`} text="They will disappear from your member list. Bills and history are kept for your records." confirmLabel="Remove member" onClose={() => setModal(null)}
         onConfirm={async () => { await api(`/members/${m.id}/archive`, { body: {} }); window.location.href = '/members'; }} />}
     </>

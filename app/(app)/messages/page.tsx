@@ -1,6 +1,7 @@
 'use client';
-import { useRef, useState } from 'react';
-import { CheckCheck, CheckCircle2, Link2, MessageCircle, PartyPopper, Pencil, Plus, RefreshCw, Send, Trash2 } from 'lucide-react';
+import { Suspense, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { AlertCircle, CheckCheck, CheckCircle2, ExternalLink, Link2, MessageCircle, PartyPopper, Pencil, Plus, RefreshCw, Send, Trash2 } from 'lucide-react';
 import { api, fmtDate, fmtDateTime, toast, useApi, waLink } from '@/lib/client';
 import { Badge, Button, Card, Confirm, Empty, ErrorNote, FormFields, FormModal, Loading, MemberPicker, Modal, PageHeader, StatusBadge, Table, Tabs } from '@/components/ui';
 
@@ -380,6 +381,39 @@ function Copyable({ label, value }: { label: string; value: string }) {
   );
 }
 
+const TIER_NOTE = 'How many different people Meta lets this number message in 24 hours. It grows as your number is used well.';
+
+/** What can be known about WhatsApp usage. Meta does not let apps read the prepaid credit balance, so we say so and point to Meta. */
+function Usage() {
+  const { data, error, reload } = useApi('/comms/whatsapp/status');
+  if (error) return <ErrorNote message={error} retry={reload} />;
+  if (!data) return <Card title="WhatsApp usage"><Loading /></Card>;
+  if (!data.connected) return null;
+  const n = (v: number) => new Intl.NumberFormat('en-IN').format(Number(v ?? 0));
+  return (
+    <Card title="WhatsApp usage and credit" subtitle="Straight from Meta where Meta shares it" className="lg:col-span-2"
+      action={<Button size="sm" onClick={reload}><RefreshCw /> Refresh</Button>}>
+      {data.refused_count > 0 && (
+        <div className="mb-4 flex items-start gap-2 bg-rose-soft text-rose rounded-lg p-3">
+          <AlertCircle className="size-4 mt-0.5 shrink-0" />
+          <span><b>Meta refused {data.refused_count} message{data.refused_count === 1 ? '' : 's'} because the credit ran out</b> (last on {fmtDateTime(data.refused_last_at)}). Add credit in Meta billing, then send them again from Ready to send.</span>
+        </div>
+      )}
+      <dl className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div><dt className="text-muted text-[13px]">Daily limit</dt><dd className="text-ink font-medium">{data.error ? '—' : data.limit ? `${n(data.limit)} people` : data.tier === 'TIER_UNLIMITED' ? 'No limit' : '—'}</dd><dd className="text-faint text-xs mt-0.5">{TIER_NOTE}</dd></div>
+        <div><dt className="text-muted text-[13px]">Sent in the last 24 hours</dt><dd className="text-ink font-medium tabular-nums">{n(data.sent_24h)}{data.limit ? ` of ${n(data.limit)}` : ''}</dd></div>
+        <div><dt className="text-muted text-[13px]">Sent this month</dt><dd className="text-ink font-medium tabular-nums">{n(data.sent_month)}</dd><dd className="text-faint text-xs mt-0.5">{n(data.sent_today)} today</dd></div>
+        <div><dt className="text-muted text-[13px]">Number quality</dt><dd className="text-ink font-medium">{data.quality_rating ?? '—'}</dd></div>
+      </dl>
+      {data.error && <p className="text-amber text-[13px] mt-3">Could not reach Meta just now: {data.error}</p>}
+      <div className="mt-4 pt-4 border-t border-line flex flex-wrap items-center gap-3">
+        <p className="flex-1 min-w-60 text-muted text-[13px]">Meta does not share your remaining prepaid balance with apps, so it cannot be shown here. Check it in Meta billing. We watch for Meta refusing messages for lack of credit, and warn you here and on the dashboard.</p>
+        <Button href={data.billing_url} target="_blank" rel="noreferrer"><ExternalLink /> Check balance in Meta</Button>
+      </div>
+    </Card>
+  );
+}
+
 function Setup({ onChange }: { onChange: () => void }) {
   const { data, error, reload } = useApi('/comms/whatsapp');
   const [form, setForm] = useState(false);
@@ -389,6 +423,7 @@ function Setup({ onChange }: { onChange: () => void }) {
   const done = () => { reload(); onChange(); };
   return (
     <div className="grid lg:grid-cols-2 gap-4 items-start">
+      <Usage />
       <Card title="WhatsApp Business account" action={data.connected ? <Badge tone="green">Connected</Badge> : <Badge>Not connected</Badge>}>
         {data.connected ? (
           <>
@@ -439,10 +474,11 @@ function Setup({ onChange }: { onChange: () => void }) {
   );
 }
 
-export default function MessagesPage() {
+function Inner() {
   const { data, error, reload } = useApi('/comms/overview');
   const auth = useApi('/auth/state');
-  const [tab, setTab] = useState('queue');
+  const sp = useSearchParams();
+  const [tab, setTab] = useState(sp.get('tab') === 'setup' ? 'setup' : 'queue');
   if (error) return <ErrorNote message={error} retry={reload} />;
   if (!data || !auth.data) return <Loading />;
   const d = { ...data, gym_name: auth.data.gym_name };
@@ -461,4 +497,8 @@ export default function MessagesPage() {
       {tab === 'setup' && <Setup onChange={reload} />}
     </>
   );
+}
+
+export default function MessagesPage() {
+  return <Suspense fallback={<Loading />}><Inner /></Suspense>;
 }

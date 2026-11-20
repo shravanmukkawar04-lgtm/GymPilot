@@ -1,8 +1,8 @@
 import { z } from 'zod';
-import { Db, insert, one, q, tenant, tx, update } from '../db';
+import { Db, insert, one, q, tenant, tx, update, widenToGym } from '../db';
 import { ApiError, bad, notFound, parse, route } from './router';
 import * as s from './schemas';
-import { createInvoice, getSettings, pickSlot, sellMembership, slotLabel } from '../services/billing';
+import { checkPastDate, createInvoice, getSettings, pickSlot, sellMembership, slotLabel } from '../services/billing';
 import { setBiometricId } from '../services/attendance';
 import { sendWelcome } from '../services/messaging';
 import { savePhoto } from '../services/photos';
@@ -14,6 +14,8 @@ const memberSchema = z.object({
 });
 const saleSchema = z.object({
   plan_id: s.id, slot_id: s.idOpt, start_date: s.date, discount: s.moneyOpt, replace_current: s.bool, payment: s.payment,
+  /** Set for an old payment: the bill and its payments are dated this day instead of today. */
+  invoice_date: s.date,
 });
 const planSchema = z.object({
   name: s.reqText, duration_months: s.int, duration_days: s.int.default(0), price: s.money, description: s.text, active: s.bool,
@@ -41,13 +43,24 @@ const FILTERS: Record<string, string> = {
   expiring: `valid_until BETWEEN gym_today() AND gym_today()+7`,
   dues: `dues > 0`,
   inactive: `status='active' AND COALESCE(last_visit, joined_on) < gym_today() - (SELECT inactive_days FROM settings)`,
+  // Calendar week starts on Monday.
+  new_week: `joined_on >= date_trunc('week', gym_today()::timestamp)::date`,
+  new_month: `joined_on >= date_trunc('month', gym_today()::timestamp)::date`,
+  blocked: `blocked`,
+  left: `left_on IS NOT NULL`,
 };
+const GENDERS: Record<string, string> = { male: `lower(gender) = 'male'`, female: `lower(gender) = 'female'` };
 
 route('GET', '/members', 'members', async ({ query }) => {
   const params: unknown[] = [];
   const where = ['NOT archived'];
-  const filter = FILTERS[query.get('status') || ''];
+  const status = query.get('status') || '';
+  const filter = FILTERS[status];
   if (filter) where.push(filter);
+  // Members who have left only show under the "Left" filter, so they do not crowd the everyday list.
+  if (status !== 'left') where.push('left_on IS NULL');
+  const gender = GENDERS[query.get('gender') || ''];
+  if (gender) where.push(gender);
   const term = query.get('q')?.trim();
   if (term) {
     params.push(`%${term}%`);
@@ -64,12 +77,19 @@ route('GET', '/members', 'members', async ({ query }) => {
   const rows = await q(`SELECT * FROM (SELECT o.*, b.name branch_name FROM member_overview o JOIN branches b ON b.id=o.branch_id) x WHERE ${clause}
     ORDER BY created_at DESC, id DESC LIMIT ${limit} OFFSET ${(page - 1) * limit}`, params);
   const total = (await one<{ c: number }>(`SELECT count(*) c FROM member_overview WHERE ${clause}`, params))!.c;
-  const counts = (await one(`SELECT count(*) FILTER (WHERE TRUE) AS "all",
+  // Counts for the filter chips and the boys / girls / new / left tiles. Boys and girls are current members (not left).
+  const counts = (await one(`SELECT count(*) FILTER (WHERE left_on IS NULL) AS "all",
       count(*) FILTER (WHERE status='active') AS active,
-      count(*) FILTER (WHERE valid_until BETWEEN gym_today() AND gym_today()+7) AS expiring,
+      count(*) FILTER (WHERE left_on IS NULL AND valid_until BETWEEN gym_today() AND gym_today()+7) AS expiring,
       count(*) FILTER (WHERE status='expired') AS expired,
       count(*) FILTER (WHERE status='frozen') AS frozen,
-      count(*) FILTER (WHERE dues > 0) AS dues
+      count(*) FILTER (WHERE left_on IS NULL AND dues > 0) AS dues,
+      count(*) FILTER (WHERE left_on IS NULL AND lower(gender) = 'male') AS male,
+      count(*) FILTER (WHERE left_on IS NULL AND lower(gender) = 'female') AS female,
+      count(*) FILTER (WHERE left_on IS NULL AND joined_on >= date_trunc('week', gym_today()::timestamp)::date) AS new_week,
+      count(*) FILTER (WHERE left_on IS NULL AND joined_on >= date_trunc('month', gym_today()::timestamp)::date) AS new_month,
+      count(*) FILTER (WHERE left_on IS NULL AND blocked) AS blocked,
+      count(*) FILTER (WHERE left_on IS NOT NULL) AS "left"
     FROM member_overview WHERE NOT archived`))!;
   return { rows, total, page, limit, counts };
 });
@@ -113,8 +133,9 @@ route('POST', '/members', 'members', async ({ body, user }) => {
   const sale = !existing && body.sale ? parse(saleSchema, body.sale) : null;
   const old = existing ? parse(existingSchema, body.existing ?? {}) : null;
   const result = await tx(async (db) => {
+    // Someone whose first payment was on an earlier date joined on that date.
     const m = await insert('members', {
-      ...data, joined_on: old?.joined_on ?? data.joined_on ?? undefined, member_code: old?.member_code || undefined, migrated: existing,
+      ...data, joined_on: old?.joined_on ?? data.joined_on ?? sale?.invoice_date ?? undefined, member_code: old?.member_code || undefined, migrated: existing,
     }, db);
     await setBiometricId(db, { member_id: m.id, staff_id: null }, biometric_id);
     await savePhoto(db, 'member', m.id, photo || undefined);
@@ -212,6 +233,58 @@ route('POST', '/members/:id/archive', 'members', async ({ params, body }) => {
 route('POST', '/members/:id/membership', 'members', async ({ params, body, user }) => {
   const sale = parse(saleSchema, body);
   return tx((db) => sellMembership(db, { member_id: Number(params.id), ...sale, user_id: user.id }));
+});
+
+/** Blocks a member from entering (their scans and front-desk check-ins are flagged), or lifts the block. */
+route('POST', '/members/:id/block', 'members', async ({ params, body }) => {
+  const v = parse(z.object({ blocked: z.boolean(), reason: s.text }), body);
+  if (v.blocked && !v.reason) throw bad('Please write a reason for blocking');
+  const m = await one<any>(
+    `UPDATE members SET blocked=$2, blocked_reason=CASE WHEN $2 THEN $3 ELSE NULL END, blocked_on=CASE WHEN $2 THEN gym_today() ELSE NULL END
+     WHERE id=$1 AND NOT archived RETURNING *`, [params.id, v.blocked, v.reason ?? null]);
+  if (!m) throw notFound('Member not found');
+  return m;
+});
+
+/** A member who has stopped coming. They leave the everyday list but their history is kept, and they can rejoin. */
+route('POST', '/members/:id/left', 'members', async ({ params, body }) => {
+  const v = parse(z.object({ left: z.boolean(), left_on: s.date, reason: s.text }), body);
+  if (v.left) await tx((db) => checkPastDate(db, v.left_on, 'The date they left'));
+  const m = await one<any>(
+    `UPDATE members SET left_on=CASE WHEN $2 THEN COALESCE($3::date, gym_today()) ELSE NULL END, left_reason=CASE WHEN $2 THEN $4 ELSE NULL END
+     WHERE id=$1 AND NOT archived RETURNING *`, [params.id, v.left, v.left_on ?? null, v.reason ?? null]);
+  if (!m) throw notFound('Member not found');
+  return m;
+});
+
+/**
+ * Moves a member to another branch (owner only). Their memberships move with them, without the old branch's plan and time slot,
+ * so they pick the new branch's own when they renew. Old bills, payments and visits stay in the branch where they happened,
+ * which keeps each branch's income and attendance reports correct. Money still owed must be cleared first, so the old branch
+ * is not left chasing a member it can no longer see. The fingerprint number belongs to the old branch's machine, so it is removed.
+ */
+route('POST', '/members/:id/transfer', 'members', async ({ params, body, user }) => {
+  if (user.role !== 'owner') throw new ApiError(403, 'Only the owner can move a member to another branch');
+  const v = parse(z.object({ branch_id: s.id }), body);
+  await widenToGym();
+  return tx(async (db) => {
+    const m = await one<any>('SELECT * FROM members WHERE id=$1 AND NOT archived FOR UPDATE', [params.id], db);
+    if (!m) throw notFound('Member not found');
+    if (m.branch_id === v.branch_id) throw bad('The member is already in this branch');
+    const dest = await one<any>('SELECT id, name FROM branches WHERE id=$1 AND active', [v.branch_id], db);
+    if (!dest) throw notFound('Branch not found');
+    const dues = (await one<{ d: number }>(`SELECT COALESCE(sum(balance),0) d FROM invoices WHERE member_id=$1 AND status IN ('unpaid','partial')`, [m.id], db))!.d;
+    if (dues > 0) throw bad(`${m.name} still owes ₹${dues}. Collect it before moving them to another branch.`);
+    const pt = (await one<{ n: number }>(`SELECT count(*) n FROM pt_subscriptions WHERE member_id=$1 AND status='active'`, [m.id], db))!.n;
+    if (pt > 0) throw bad(`${m.name} has personal training running with a trainer of this branch. Finish or cancel it first.`);
+    const phoneTaken = await one<any>(`SELECT name FROM members WHERE branch_id=$1 AND id<>$2 AND NOT archived AND right(regexp_replace(phone,'\\D','','g'),10) = right(regexp_replace($3,'\\D','','g'),10)`, [dest.id, m.id, m.phone], db);
+    if (phoneTaken) throw bad(`${dest.name} already has a member with this phone number (${phoneTaken.name})`);
+    await db.query('UPDATE members SET branch_id=$2 WHERE id=$1', [m.id, dest.id]);
+    await db.query('UPDATE memberships SET branch_id=$2, plan_id=NULL, slot_id=NULL, slot_name=NULL WHERE member_id=$1', [m.id, dest.id]);
+    await db.query('UPDATE membership_freezes SET branch_id=$2 WHERE membership_id IN (SELECT id FROM memberships WHERE member_id=$1)', [m.id, dest.id]);
+    await db.query('DELETE FROM biometric_enrollments WHERE member_id=$1', [m.id]);
+    return { id: m.id, branch_id: dest.id, branch_name: dest.name };
+  });
 });
 
 /**

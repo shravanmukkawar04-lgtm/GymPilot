@@ -2,7 +2,7 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Fingerprint, Loader2, Plus, Search, Trash2, Users } from 'lucide-react';
-import { api, fmtDate, fmtDateTime, fmtTime, monthIST, todayIST, toast, useApi } from '@/lib/client';
+import { api, fmtDate, fmtDateTime, fmtTime, monthIST, photoUrl, todayIST, toast, useApi } from '@/lib/client';
 import { Avatar, Badge, Button, Card, Confirm, Empty, ErrorNote, FormModal, Loading, Modal, PageHeader, Stat, StatusBadge, Table, Tabs } from '@/components/ui';
 import { slotLabel } from '@/components/sales';
 
@@ -100,7 +100,7 @@ function BatchCheckin({ onClose, onDone }: { onClose: () => void; onDone: () => 
                   <li key={r.id}>
                     <label className={`flex items-center gap-3 px-3 py-2.5 ${r.check_in ? 'opacity-60' : 'cursor-pointer hover:bg-canvas'}`}>
                       <input type="checkbox" className="size-4 accent-[var(--color-brand)]" checked={!r.check_in && picked.includes(r.id)} disabled={!!r.check_in} onChange={() => toggle(r.id)} />
-                      <Avatar name={r.name} size={32} />
+                      <Avatar name={r.name} size={44} src={photoUrl('member', r.id, r.photo_v)} />
                       <span className="flex-1 min-w-0"><span className="block font-medium text-ink truncate">{r.name}</span><span className="text-muted text-[13px]">{r.member_code}{r.plan_name ? ` · ${r.plan_name}` : ''}</span></span>
                       {r.check_in ? <Badge tone="green">In at {fmtTime(r.check_in)}</Badge> : <StatusBadge status={r.status} />}
                     </label>
