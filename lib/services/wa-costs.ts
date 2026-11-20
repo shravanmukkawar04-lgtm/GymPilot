@@ -56,6 +56,6 @@ export async function syncWhatsAppCostsIfStale() {
 
 /** Cost per month and category for the last six months, newest first, for the history table. */
 export const costHistory = () => q(`
-  SELECT to_char(date_trunc('month', day), 'YYYY-MM') month, category, sum(volume)::int volume, sum(cost) cost, max(currency) currency
+  SELECT to_char(date_trunc('month', day), 'YYYY-MM') AS month, category, sum(volume)::int AS volume, sum(cost) AS cost, max(currency) AS currency
   FROM whatsapp_costs WHERE day >= (date_trunc('month', gym_today()::timestamp) - interval '5 months')::date
   GROUP BY 1, 2 ORDER BY 1 DESC, 2`);
