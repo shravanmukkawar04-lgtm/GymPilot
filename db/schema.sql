@@ -600,6 +600,9 @@ CREATE TABLE IF NOT EXISTS whatsapp_costs (
 ALTER TABLE whatsapp_settings ADD COLUMN IF NOT EXISTS costs_synced_at timestamptz;
 ALTER TABLE whatsapp_settings ADD COLUMN IF NOT EXISTS costs_error text;
 ALTER TABLE whatsapp_settings ADD COLUMN IF NOT EXISTS costs_tried_at timestamptz;
+-- Meta's last answer about the number (quality, daily limit), kept so the setup tab does not ask Meta on every visit.
+ALTER TABLE whatsapp_settings ADD COLUMN IF NOT EXISTS wa_live jsonb;
+ALTER TABLE whatsapp_settings ADD COLUMN IF NOT EXISTS wa_live_at timestamptz;
 -- How Meta billed each message, from its delivery reports. And the category Meta gave each template.
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS billing_category text;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS billable boolean;

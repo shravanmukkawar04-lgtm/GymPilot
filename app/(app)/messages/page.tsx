@@ -439,14 +439,16 @@ const TIER_NOTE = 'How many different people Meta lets this number message in 24
 
 /** What can be known about WhatsApp usage. Meta does not let apps read the prepaid credit balance, so we say so and point to Meta. */
 function Usage() {
-  const { data, error, reload } = useApi('/comms/whatsapp/status');
+  // Meta's answer is saved for a few minutes on the server; Refresh asks Meta again.
+  const [force, setForce] = useState(false);
+  const { data, error, reload } = useApi(`/comms/whatsapp/status${force ? '?refresh=1' : ''}`);
   if (error) return <ErrorNote message={error} retry={reload} />;
   if (!data) return <Card title="WhatsApp usage"><Loading /></Card>;
   if (!data.connected) return null;
   const n = (v: number) => new Intl.NumberFormat('en-IN').format(Number(v ?? 0));
   return (
     <Card title="WhatsApp usage and credit" subtitle="Straight from Meta where Meta shares it" className="lg:col-span-2"
-      action={<Button size="sm" onClick={reload}><RefreshCw /> Refresh</Button>}>
+      action={<Button size="sm" onClick={() => (force ? reload() : setForce(true))}><RefreshCw /> Refresh</Button>}>
       {data.refused_count > 0 && (
         <div className="mb-4 flex items-start gap-2 bg-rose-soft text-rose rounded-lg p-3">
           <AlertCircle className="size-4 mt-0.5 shrink-0" />
@@ -454,12 +456,13 @@ function Usage() {
         </div>
       )}
       <dl className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div><dt className="text-muted text-[13px]">Daily limit</dt><dd className="text-ink font-medium">{data.error ? '—' : data.limit ? `${n(data.limit)} people` : data.tier === 'TIER_UNLIMITED' ? 'No limit' : '—'}</dd><dd className="text-faint text-xs mt-0.5">{TIER_NOTE}</dd></div>
+        <div><dt className="text-muted text-[13px]">Daily limit</dt><dd className="text-ink font-medium">{data.limit ? `${n(data.limit)} people` : data.tier === 'TIER_UNLIMITED' ? 'No limit' : '—'}</dd><dd className="text-faint text-xs mt-0.5">{TIER_NOTE}</dd></div>
         <div><dt className="text-muted text-[13px]">Sent in the last 24 hours</dt><dd className="text-ink font-medium tabular-nums">{n(data.sent_24h)}{data.limit ? ` of ${n(data.limit)}` : ''}</dd></div>
         <div><dt className="text-muted text-[13px]">Sent this month</dt><dd className="text-ink font-medium tabular-nums">{n(data.sent_month)}</dd><dd className="text-faint text-xs mt-0.5">{n(data.sent_today)} today</dd></div>
         <div><dt className="text-muted text-[13px]">Number quality</dt><dd className="text-ink font-medium">{data.quality_rating ?? '—'}</dd></div>
       </dl>
-      {data.error && <p className="text-amber text-[13px] mt-3">Could not reach Meta just now: {data.error}</p>}
+      {data.error && <p className="text-amber text-[13px] mt-3">Could not reach Meta just now{data.live_at ? ', so this is the last answer it gave' : ''}: {data.error}</p>}
+      {data.live_at && !data.error && <p className="text-faint text-xs mt-3">Quality and limit checked with Meta at {fmtDateTime(data.live_at)}. Press Refresh to check again.</p>}
       <CostHistory />
       <div className="mt-4 pt-4 border-t border-line flex flex-wrap items-center gap-3">
         <p className="flex-1 min-w-60 text-muted text-[13px]">Meta does not share your remaining prepaid balance with apps, so it cannot be shown here. Check it in Meta billing. We watch for Meta refusing messages for lack of credit, and warn you here and on the dashboard.</p>

@@ -43,6 +43,7 @@ async function graph(path: string, token: string, init: { method?: string; body?
     method: init.method ?? 'GET',
     headers: { Authorization: `Bearer ${token}`, ...(init.body ? { 'Content-Type': 'application/json' } : {}) },
     body: init.body ? JSON.stringify(init.body) : undefined,
+    signal: AbortSignal.timeout(15_000), // a slow Meta answer should not hang the screen
   });
   const data: any = await res.json().catch(() => ({}));
   if (!res.ok) {

@@ -171,19 +171,37 @@ route('GET', '/comms/whatsapp', 'comms', async ({ req }) => connectionView(req))
  * the number's quality and daily limit from Meta, how many messages this app sent, and whether Meta recently refused
  * messages because the balance had run out (error 131042), which is the sign that credit needs adding.
  */
-route('GET', '/comms/whatsapp/status', 'comms', async () => {
+// Meta's answer about the number changes slowly, so it is reused for this long before asking again.
+const LIVE_TTL = 10 * 60_000;
+
+route('GET', '/comms/whatsapp/status', 'comms', async ({ query }) => {
   const cfg = await waConfig();
   if (!cfg) return { connected: false };
-  const [live, usage, refused] = await Promise.all([
-    liveNumberStatus(cfg).then((v) => ({ ...v, error: null as string | null })).catch((e) => ({ quality_rating: null, tier: null, limit: null as number | null, error: String(e.message) })),
-    one<any>(`SELECT
-        count(*) FILTER (WHERE sent_at > now() - interval '24 hours') sent_24h,
-        count(*) FILTER (WHERE date_trunc('month', sent_at AT TIME ZONE 'Asia/Kolkata') = date_trunc('month', gym_today()::timestamp)) sent_month,
-        count(*) FILTER (WHERE sent_at AT TIME ZONE 'Asia/Kolkata' >= gym_today()) sent_today
-      FROM messages WHERE channel='whatsapp' AND status='sent' AND wa_message_id IS NOT NULL`),
-    one<any>(`SELECT count(*) n, max(created_at) last_at FROM messages WHERE channel='whatsapp' AND status='failed' AND error LIKE '%131042%' AND created_at > now() - interval '7 days'`),
-  ]);
-  return { connected: true, ...live, ...usage, refused_count: refused?.n ?? 0, refused_last_at: refused?.last_at ?? null, billing_url: 'https://business.facebook.com/billing_hub' };
+  // The quality and limit come from the saved copy while it is fresh; the Refresh button (?refresh=1) always asks Meta.
+  const saved = await one<any>('SELECT wa_live, wa_live_at FROM whatsapp_settings');
+  let live: { quality_rating: string | null; tier: string | null; limit: number | null } | null = saved?.wa_live ?? null;
+  let liveAt: string | null = saved?.wa_live_at ?? null;
+  let error: string | null = null;
+  const age = liveAt ? Date.now() - new Date(liveAt).getTime() : Infinity;
+  if (query.get('refresh') === '1' || !live || age > LIVE_TTL) {
+    try {
+      live = await liveNumberStatus(cfg);
+      liveAt = new Date().toISOString();
+      await q('UPDATE whatsapp_settings SET wa_live=$1, wa_live_at=now()', [JSON.stringify(live)]);
+    } catch (e: any) {
+      error = String(e.message); // the saved copy, if any, is still shown
+    }
+  }
+  const usage = await one<any>(`SELECT
+      count(*) FILTER (WHERE sent_at > now() - interval '24 hours') sent_24h,
+      count(*) FILTER (WHERE date_trunc('month', sent_at AT TIME ZONE 'Asia/Kolkata') = date_trunc('month', gym_today()::timestamp)) sent_month,
+      count(*) FILTER (WHERE sent_at AT TIME ZONE 'Asia/Kolkata' >= gym_today()) sent_today
+    FROM messages WHERE channel='whatsapp' AND status='sent' AND wa_message_id IS NOT NULL`);
+  const refused = await one<any>(`SELECT count(*) n, max(created_at) last_at FROM messages WHERE channel='whatsapp' AND status='failed' AND error LIKE '%131042%' AND created_at > now() - interval '7 days'`);
+  return {
+    connected: true, quality_rating: live?.quality_rating ?? null, tier: live?.tier ?? null, limit: live?.limit ?? null, live_at: liveAt, error,
+    ...usage, refused_count: refused?.n ?? 0, refused_last_at: refused?.last_at ?? null, billing_url: 'https://business.facebook.com/billing_hub',
+  };
 });
 
 /** What WhatsApp charged, month by month, as read from Meta and kept as history. */
