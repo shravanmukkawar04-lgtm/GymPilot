@@ -97,7 +97,7 @@ route('GET', '/dashboard', 'dashboard', async ({ user }) => {
   await tx(() => runAllAutomations()).catch((e) => console.error('[automations]', e));
   await tx(() => syncWhatsAppCostsIfStale()).catch((e) => console.error('[whatsapp costs]', e));
 
-  const [kpis, chart, recent, setup] = await Promise.all([
+  const [kpis, chart, recent, setup, graphs] = await Promise.all([
     one(`SELECT
       (SELECT count(*) FROM member_overview WHERE NOT archived AND status='active') active_members,
       (SELECT count(*) FROM attendance WHERE day=gym_today() AND member_id IS NOT NULL) checkins_today,
@@ -141,9 +141,29 @@ route('GET', '/dashboard', 'dashboard', async ({ user }) => {
       EXISTS(SELECT 1 FROM members) members,
       EXISTS(SELECT 1 FROM biometric_devices) device,
       EXISTS(SELECT 1 FROM leads) leads`),
+    dashboardGraphs(),
   ]);
-  return { kind: 'owner', kpis, chart, recent, setup };
+  return { kind: 'owner', kpis, chart, recent, setup, graphs };
 });
+
+/** Data for the three graphs on the dashboard. Limited to the branch on screen, like the rest of it. */
+async function dashboardGraphs() {
+  const [checkins, plans, growth] = await Promise.all([
+    // Members who came in on each of the last 30 days (days with nobody count as 0).
+    q(`SELECT to_char(d, 'DD Mon') AS label, count(a.id)::int AS n
+       FROM generate_series(gym_today() - 29, gym_today(), interval '1 day') d
+       LEFT JOIN attendance a ON a.day = d::date AND a.member_id IS NOT NULL GROUP BY d ORDER BY d`),
+    // Active members on each plan.
+    q(`SELECT COALESCE(plan_name, 'No plan') AS plan_name, count(*)::int AS n
+       FROM member_overview WHERE NOT archived AND left_on IS NULL AND status = 'active' GROUP BY 1 ORDER BY n DESC, 1`),
+    // Members who joined and members who left, for each of the last 6 months.
+    q(`SELECT to_char(m,'Mon') AS label,
+        (SELECT count(*) FROM members WHERE NOT archived AND date_trunc('month', joined_on) = m)::int AS joined,
+        (SELECT count(*) FROM members WHERE NOT archived AND left_on IS NOT NULL AND date_trunc('month', left_on) = m)::int AS "left"
+       FROM generate_series(date_trunc('month',gym_today()::timestamp) - interval '5 months', date_trunc('month',gym_today()::timestamp), interval '1 month') m ORDER BY m`),
+  ]);
+  return { checkins, plans, growth };
+}
 
 async function trainerDashboard(staffId: number) {
   const [kpis, sessions, lowClients] = await Promise.all([
