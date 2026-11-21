@@ -120,6 +120,33 @@ export async function addPayment(db: Db, invoiceId: number, p: PaymentInput, use
   return pay;
 }
 
+/**
+ * Takes one customer's payment against all their unpaid bills, oldest first, so a single amount can clear
+ * a previous due and a newer bill together. Returns how many bills were touched and what is still owed.
+ */
+export async function collectDues(db: Db, invoiceIds: number[], payments: PaymentInput[], userId?: number | null) {
+  const bills = await q<{ id: number; balance: number }>(
+    `SELECT id, balance FROM invoices WHERE id = ANY($1) AND status IN ('unpaid','partial') ORDER BY invoice_date, id FOR UPDATE`, [invoiceIds], db);
+  if (!bills.length) throw bad('These bills have nothing due');
+  const owed = bills.reduce((a, b) => a + paise(b.balance), 0);
+  const total = payments.reduce((a, p) => a + paise(p.amount), 0);
+  if (total <= 0) throw bad('Enter the amount received');
+  if (total > owed) throw bad(`Amount is more than they owe (₹${rupees(owed)})`);
+  const left = bills.map((b) => ({ id: b.id, p: paise(b.balance) }));
+  const touched = new Set<number>();
+  for (const pay of payments) {
+    let remaining = paise(pay.amount);
+    for (const b of left) {
+      if (remaining <= 0) break;
+      const chunk = Math.min(remaining, b.p);
+      if (chunk <= 0) continue;
+      await addPayment(db, b.id, { ...pay, amount: rupees(chunk) }, userId);
+      b.p -= chunk; remaining -= chunk; touched.add(b.id);
+    }
+  }
+  return { bills: touched.size, still_due: rupees(owed - total) };
+}
+
 /** Records one or more payments, for example ₹1000 cash and ₹1500 UPI on the same bill. */
 export async function addPayments(db: Db, invoiceId: number, p: PaymentInput | PaymentInput[] | null | undefined, userId?: number | null) {
   const list = (Array.isArray(p) ? p : p ? [p] : []).filter((x) => x.amount > 0);

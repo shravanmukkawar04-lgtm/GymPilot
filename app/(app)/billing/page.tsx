@@ -1,8 +1,9 @@
 'use client';
 import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Plus, ReceiptText, Trash2 } from 'lucide-react';
+import { IndianRupee, Plus, ReceiptText, Trash2 } from 'lucide-react';
 import { api, fmtDate, inr, toast, useApi } from '@/lib/client';
+import { CollectDues } from '@/components/collect-dues';
 import { Button, Card, Empty, ErrorNote, Loading, MemberPicker, METHODS, PayInputs, Modal, PageHeader, Stat, StatusBadge, Table, Tabs, toPayment } from '@/components/ui';
 
 function NewBill({ onClose, onDone }: { onClose: () => void; onDone: (id: number) => void }) {
@@ -59,7 +60,8 @@ function Inner() {
   const [term, setTerm] = useState('');
   const [adding, setAdding] = useState(sp.get('new') === '1');
   useEffect(() => { const t = setTimeout(() => setTerm(q), 250); return () => clearTimeout(t); }, [q]);
-  useEffect(() => { if (sp.get('new') === '1') setAdding(true); }, [sp]);
+  const [collecting, setCollecting] = useState(sp.get('collect') === '1');
+  useEffect(() => { if (sp.get('new') === '1') setAdding(true); if (sp.get('collect') === '1') setCollecting(true); }, [sp]);
   const { data, error, reload } = useApi(`/invoices?status=${status}&q=${encodeURIComponent(term)}`);
   const pays = useApi<any[]>(tab === 'payments' ? '/payments' : null);
   if (error) return <ErrorNote message={error} retry={reload} />;
@@ -69,6 +71,7 @@ function Inner() {
   return (
     <>
       <PageHeader title="Bills & Payments" help="Every bill and payment in one place. Click a bill to collect money, print it or show a UPI QR code.">
+        <Button onClick={() => setCollecting(true)}><IndianRupee /> Collect dues</Button>
         <Button variant="primary" onClick={() => setAdding(true)}><Plus /> New bill</Button>
       </PageHeader>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
@@ -107,6 +110,7 @@ function Inner() {
             ]} />}
         </Card>
       )}
+      {collecting && <CollectDues onClose={() => setCollecting(false)} onDone={reload} />}
       {adding && <NewBill onClose={() => setAdding(false)} onDone={(id) => router.push(`/billing/${id}`)} />}
     </>
   );

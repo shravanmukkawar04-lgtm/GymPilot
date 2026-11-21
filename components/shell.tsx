@@ -36,6 +36,7 @@ const QUICK = [
   { href: '/leads?new=1', label: 'New enquiry' },
   { href: '/attendance?checkin=1', label: 'Check someone in' },
   { href: '/billing?new=1', label: 'New bill' },
+  { href: '/billing?collect=1', label: 'Collect dues' },
   { href: '/expenses?new=1', label: 'Add expense' },
 ];
 

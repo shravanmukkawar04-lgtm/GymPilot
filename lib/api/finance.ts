@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { insert, one, q, tx, update } from '../db';
 import { bad, notFound, parse, route } from './router';
 import * as s from './schemas';
-import { addPayment, addPayments, cancelInvoice, createInvoice, getSettings, voidPayment } from '../services/billing';
+import { addPayment, addPayments, cancelInvoice, collectDues, createInvoice, getSettings, voidPayment } from '../services/billing';
 
 const invoiceSchema = z.object({
   member_id: s.idOpt, customer_name: s.text, customer_phone: s.phoneOpt, due_date: s.date, notes: s.text, discount: s.moneyOpt, payment: s.payment,
@@ -60,6 +60,12 @@ route('POST', '/invoices/:id/payments', 'billing', async ({ params, body, user }
   }
   const v = parse(paymentSchema, body);
   return tx((db) => addPayment(db, Number(params.id), v, user.id));
+});
+
+/** One payment from a customer, spread over their unpaid bills oldest first. */
+route('POST', '/invoices/collect-dues', 'billing', async ({ body, user }) => {
+  const v = parse(z.object({ invoice_ids: z.array(s.id).min(1).max(200), payments: z.array(paymentSchema).min(1).max(4) }), body);
+  return tx((db) => collectDues(db, v.invoice_ids, v.payments, user.id));
 });
 
 route('POST', '/invoices/:id/cancel', 'billing', async ({ params, body, user }) => {
