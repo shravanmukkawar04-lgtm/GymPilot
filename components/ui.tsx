@@ -248,6 +248,8 @@ export type Field = {
   type?: 'text' | 'number' | 'date' | 'datetime-local' | 'time' | 'tel' | 'email' | 'password' | 'select' | 'textarea' | 'checkbox' | 'member' | 'section' | 'checks' | 'choice' | 'photo';
   options?: Dyn<Opt[]>; required?: Dyn<boolean>; help?: Dyn<string | undefined>; placeholder?: string; full?: boolean; min?: number; max?: string | (() => string); step?: string;
   show?: (v: any) => boolean;
+  /** Extra content under a checkbox (kept outside its label, so clicking it does not toggle the box). */
+  note?: (v: any) => ReactNode;
   /** For photo fields: the URL of the photo already saved. */
   current?: (v: any) => string | null;
 };
@@ -334,10 +336,13 @@ export function FormFields({ fields, values, set }: { fields: Field[]; values: a
       {fields.filter((f) => !f.show || f.show(values)).map((f) => {
         if (f.type === 'section') return <h3 key={f.name} className="sm:col-span-2 font-semibold pt-2 border-t border-line first:border-0 first:pt-0">{f.label}</h3>;
         if (f.type === 'checkbox') return (
-          <label key={f.name} className="sm:col-span-2 flex items-start gap-2.5 py-1 cursor-pointer">
-            <input type="checkbox" className="mt-0.5 size-4 accent-[var(--color-brand)]" checked={!!values[f.name]} onChange={(e) => set(f.name, e.target.checked)} />
-            <span><span className="text-ink">{f.label}</span>{dyn(f.help, values) && <span className="block text-muted text-[13px]">{dyn(f.help, values)}</span>}</span>
-          </label>
+          <div key={f.name} className="sm:col-span-2">
+            <label className="flex items-start gap-2.5 py-1 cursor-pointer">
+              <input type="checkbox" className="mt-0.5 size-4 accent-[var(--color-brand)]" checked={!!values[f.name]} onChange={(e) => set(f.name, e.target.checked)} />
+              <span><span className="text-ink">{f.label}</span>{dyn(f.help, values) && <span className="block text-muted text-[13px]">{dyn(f.help, values)}</span>}</span>
+            </label>
+            {f.note && <div className="pl-[26px] pb-1">{f.note(values)}</div>}
+          </div>
         );
         const help = dyn(f.help, values);
         const wide = f.full || ['textarea', 'member', 'checks', 'choice', 'photo'].includes(f.type ?? '');

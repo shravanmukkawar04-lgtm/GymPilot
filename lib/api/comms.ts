@@ -28,6 +28,9 @@ route('GET', '/comms/overview', 'comms', async () => {
   return { queue, templates, audiences: Object.fromEntries(counts), channels, auto_vars: AUTO_VARS };
 });
 
+/** The library templates (those with a key), for showing which one each automatic message uses. Unlike the overview, this starts nothing. */
+route('GET', '/comms/templates', 'comms', async () => q(`SELECT id, key, name, header, body, footer, wa_status, wa_template_name FROM message_templates WHERE key IS NOT NULL ORDER BY id`));
+
 route('GET', '/comms/history', 'comms', async () => q(`SELECT * FROM messages WHERE status='sent' ORDER BY sent_at DESC LIMIT 200`));
 
 route('POST', '/comms/send', 'comms', async ({ body, user }) => {

@@ -1,9 +1,11 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useUser } from '@/components/shell';
-import { Building2, Loader2, Plus, UserPlus } from 'lucide-react';
+import { Building2, Eye, Loader2, MessageSquareText, Plus, UserPlus } from 'lucide-react';
 import { api, photoUrl, toast, useApi } from '@/lib/client';
-import { Badge, Button, Card, Empty, ErrorNote, Field, FormFields, FormModal, Loading, PageHeader, Tabs } from '@/components/ui';
+import { Badge, Button, Card, Empty, ErrorNote, Field, FormFields, FormModal, Loading, Modal, PageHeader, Tabs } from '@/components/ui';
+import { PhoneMock, WaStatus, withSamples } from '@/components/whatsapp-preview';
+import { AUTO_TEMPLATES } from '@/lib/automation-templates';
 
 type Group = { title: string; subtitle?: string; fields: Field[] };
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -68,6 +70,28 @@ const TABS: { key: string; label: string; groups?: Group[] }[] = [
   { key: 'account', label: 'My account' },
 ];
 
+/** Under an automatic-message switch: which template it sends, where that template stands with WhatsApp, and a preview. */
+function TemplateNote({ flag, templates, onPreview }: { flag: string; templates: any[] | null; onPreview: (t: any) => void }) {
+  const keys = AUTO_TEMPLATES[flag] ?? [];
+  if (!keys.length || !templates) return null;
+  return (
+    <ul className="mt-0.5 space-y-1">
+      {keys.map((k) => {
+        const t = templates.find((x) => x.key === k);
+        if (!t) return <li key={k} className="text-rose text-xs">The template “{k}” is missing. Add it in Messages, under Templates.</li>;
+        return (
+          <li key={k} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px]">
+            <MessageSquareText className="size-3.5 shrink-0 text-faint" aria-hidden />
+            <span className="text-muted">Sends</span> <span className="font-medium text-ink">{t.name}</span>
+            <WaStatus t={t} />
+            <button type="button" className="inline-flex items-center gap-1 text-brand hover:underline" onClick={() => onPreview(t)}><Eye className="size-3.5" /> Preview</button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 export default function SettingsPage() {
   const { data, error, reload } = useApi('/settings');
   const [v, setV] = useState<any>(null);
@@ -76,6 +100,8 @@ export default function SettingsPage() {
   const [pw, setPw] = useState(false);
   const [photo, setPhoto] = useState(false);
   const [tab, setTab] = useState('gym');
+  const templates = useApi<any[]>('/comms/templates');
+  const [preview, setPreview] = useState<any>(null);
   const me = useUser();
   useEffect(() => { if (data) setV({ ...data, gym_photo: undefined, weekly_off: data.weekly_off ?? -1 }); }, [data]);
   if (error) return <ErrorNote message={error} retry={reload} />;
@@ -103,7 +129,7 @@ export default function SettingsPage() {
           )}
           {current.groups.map((g) => (
             <Card key={g.title} title={g.title} subtitle={g.subtitle}>
-              <FormFields fields={g.fields} values={v} set={(n, x) => setV({ ...v, [n]: x })} />
+              <FormFields fields={g.fields.map((f) => (AUTO_TEMPLATES[f.name] ? { ...f, note: () => <TemplateNote flag={f.name} templates={templates.data} onPreview={setPreview} /> } : f))} values={v} set={(n, x) => setV({ ...v, [n]: x })} />
             </Card>
           ))}
         </form>
@@ -119,6 +145,12 @@ export default function SettingsPage() {
             </div>
           </Card>
         </div>
+      )}
+      {preview && (
+        <Modal title={preview.name} subtitle="How this message looks on a phone. Example details are shown; real messages use each person’s own." onClose={() => setPreview(null)}>
+          <PhoneMock gymName={v.gym_name} header={preview.header} body={withSamples(preview.body, v)} footer={preview.footer} />
+          <div className="flex justify-end mt-4"><Button onClick={() => setPreview(null)}>Close</Button></div>
+        </Modal>
       )}
       {photo && <FormModal title="My photo" subtitle="Shown next to your name in the menu." submitLabel="Save photo" onClose={() => setPhoto(false)}
         fields={[{ name: 'photo', label: 'Photo', type: 'photo', current: () => photoUrl('user', me.id, me.photo_v) }]} initial={{ name: me.name }}

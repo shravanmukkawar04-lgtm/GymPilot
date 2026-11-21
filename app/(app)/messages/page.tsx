@@ -3,6 +3,7 @@ import { Suspense, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { AlertCircle, CheckCheck, CheckCircle2, ExternalLink, Link2, MessageCircle, PartyPopper, Pencil, Plus, RefreshCw, Send, Trash2 } from 'lucide-react';
 import { api, fmtDate, fmtDateTime, inr, toast, useApi, waLink } from '@/lib/client';
+import { PhoneMock, SAMPLE_VALUES, WaStatus } from '@/components/whatsapp-preview';
 import { Badge, Button, Card, Confirm, Empty, ErrorNote, FormFields, FormModal, Loading, MemberPicker, Modal, PageHeader, StatusBadge, Table, Tabs, WaText } from '@/components/ui';
 
 const AUDIENCES = [
@@ -13,20 +14,12 @@ const AUDIENCES = [
 const CHANNELS = [{ value: 'whatsapp', label: 'WhatsApp' }, { value: 'sms', label: 'SMS' }, { value: 'email', label: 'Email' }];
 const HOLIDAY_PRESETS = [{ key: 'holiday_closed', label: 'Gym closed' }, { key: 'holiday_timings', label: 'Changed timings' }, { key: 'holiday_wishes', label: 'Festival wishes' }];
 const VAR = /\{\{\s*(\w+)\s*\}\}/g;
-const SAMPLE: Record<string, string> = { name: 'Rohan Patil', plan: 'Quarterly', expiry_date: '25-12-2026', due_amount: '1500' };
 
 const blanks = (body: string, auto: string[]) => [...new Set([...body.matchAll(VAR)].map((m) => m[1]))].filter((v) => !auto.includes(v));
 const pretty = (v: string) => v.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
-const fill = (body: string, values: Record<string, string>) => body.replace(VAR, (m, k) => values[k] || SAMPLE[k] || m);
+const fill = (body: string, values: Record<string, string>) => body.replace(VAR, (m, k) => values[k] || SAMPLE_VALUES[k] || m);
 const isReady = (t: any) => !!t?.wa_template_name && (!t.wa_status || t.wa_status === 'APPROVED');
 const fmtClock = (t: string) => { const [h, m] = t.split(':').map(Number); return `${h % 12 || 12}${m ? `:${String(m).padStart(2, '0')}` : ''} ${h < 12 ? 'AM' : 'PM'}`; };
-
-function WaStatus({ t }: { t: any }) {
-  const map: Record<string, [string, string]> = { APPROVED: ['green', 'Approved'], PENDING: ['amber', 'Waiting for Meta'], REJECTED: ['red', 'Rejected'], PAUSED: ['red', 'Paused by Meta'], DISABLED: ['red', 'Disabled by Meta'] };
-  if (!t.wa_status) return <Badge>Not submitted</Badge>;
-  const [tone, label] = map[t.wa_status] ?? ['gray', t.wa_status];
-  return <Badge tone={tone}>{label}</Badge>;
-}
 
 const CATEGORY_LABEL: Record<string, string> = { UTILITY: 'Utility', MARKETING: 'Marketing', AUTHENTICATION: 'Authentication' };
 
@@ -39,18 +32,6 @@ function CategoryNote({ t }: { t: any }) {
       <Badge tone={same ? (t.wa_category === 'MARKETING' ? 'amber' : 'green') : 'red'}>Meta: {CATEGORY_LABEL[t.wa_category] ?? t.wa_category}</Badge>
       {!same && <span className="text-rose text-xs">Meta changed this from {t.category === 'MARKETING' ? 'Marketing' : 'Utility'}{t.wa_category === 'MARKETING' ? ' and bills it at the marketing rate' : ''}</span>}
     </span>
-  );
-}
-
-function Bubble({ header, body, footer }: { header?: string | null; body: string; footer?: string | null }) {
-  return (
-    <div className="rounded-xl bg-[#e7ded3] p-3">
-      <div className="bg-white rounded-lg rounded-tl-none px-3 py-2 shadow-sm max-w-[340px]">
-        {header && <div className="font-semibold text-ink mb-1">{header}</div>}
-        <div className="whitespace-pre-wrap text-ink leading-snug">{body ? <WaText text={body} /> : 'Your message appears here'}</div>
-        {footer && <div className="text-faint text-xs mt-1">{footer}</div>}
-      </div>
-    </div>
   );
 }
 
@@ -224,7 +205,7 @@ function Compose({ d, onDone, openSetup }: { d: any; onDone: (toCampaigns: boole
       </Card>
 
       <Card className="lg:col-span-2 lg:sticky lg:top-0" title="Preview" subtitle="How it looks on a member’s phone">
-        <Bubble header={template?.header} body={shown} footer={template?.footer} />
+        <PhoneMock gymName={d.gym_name} header={template?.header} body={shown} footer={template?.footer} />
       </Card>
 
       {confirm && <Confirm title={automatic ? `Send to ${count} ${count === 1 ? 'person' : 'people'}?` : 'Prepare these messages?'} text={automatic ? 'Messages go out immediately and cannot be recalled.' : 'They will be added to Ready to send.'} confirmLabel={automatic ? 'Send now' : 'Prepare'}
@@ -286,7 +267,7 @@ function TemplateEditor({ t, d, onClose, onDone }: { t: any; d: any; onClose: ()
         </div>
         <div className="md:col-span-2">
           <div className="text-[13px] font-medium text-ink mb-1.5">Preview</div>
-          <Bubble header={v.header} body={preview} footer={v.footer} />
+          <PhoneMock gymName={d.gym_name} header={v.header} body={preview} footer={v.footer} />
           <p className="text-muted text-xs mt-2">WhatsApp needs a word before the first blank and after the last one, and no two blanks side by side.</p>
         </div>
       </div>
