@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Package, PackagePlus, Plus, ShoppingCart, SlidersHorizontal, Trash2, Truck } from 'lucide-react';
 import { api, fmtDate, fmtDateTime, inr, saleTotals, todayIST, toast, useApi } from '@/lib/client';
+import { CollectDues } from '@/components/collect-dues';
 import { Badge, Button, Card, Confirm, Empty, ErrorNote, Field, FormModal, Loading, MemberPicker, METHODS, Modal, PageHeader, PayInputs, Stat, StatusBadge, Table, Tabs, toPayment } from '@/components/ui';
 
 const productFields: Field[] = [
@@ -347,6 +348,7 @@ export default function InventoryPage() {
   const [edit, setEdit] = useState<any>(null);
   const [stock, setStock] = useState<any>(null);
   const [sell, setSell] = useState(false);
+  const [collect, setCollect] = useState(false);
   const [buy, setBuy] = useState<any>(null);
   const [newSupplier, setNewSupplier] = useState(false);
   const [supplier, setSupplier] = useState<number | null>(null);
@@ -369,7 +371,7 @@ export default function InventoryPage() {
         <Stat label="Running low" value={data.filter((p) => p.low).length} tone={data.some((p) => p.low) ? 'amber' : undefined} />
         <Stat label="You owe suppliers" value={inr(purchases.data?.summary.owed ?? 0)} tone={purchases.data?.summary.owed > 0 ? 'red' : undefined} hint={`Bought this month: ${inr(purchases.data?.summary.month ?? 0)}`} />
         <Stat label="Sales this month" value={inr(sales.data?.summary.month ?? 0)} hint={`Today ${inr(sales.data?.summary.today ?? 0)} · Received ${inr(sales.data?.summary.month_paid ?? 0)} · ${sales.data?.summary.month_bills ?? 0} bills`} />
-        <Stat label="Customers owe you" value={inr(sales.data?.summary.owed ?? 0)} tone={sales.data?.summary.owed > 0 ? 'amber' : undefined} />
+        <Stat label="Customers owe you" value={inr(sales.data?.summary.owed ?? 0)} tone={sales.data?.summary.owed > 0 ? 'amber' : undefined} hint="Click to see who and collect" onClick={() => setCollect(true)} />
       </div>
       <Tabs value={tab} onChange={setTab} tabs={[
         { key: 'stock', label: 'Stock' }, { key: 'sales', label: 'Sales' }, { key: 'purchases', label: 'Purchases' },
@@ -462,6 +464,7 @@ export default function InventoryPage() {
           { name: 'note', label: 'Note', full: true },
         ]}
         onSubmit={async (v) => { await api(`/products/${stock.id}/stock`, { body: v }); toast('Stock updated'); done(); }} />}
+      {collect && <CollectDues shop onClose={() => setCollect(false)} onDone={done} />}
       {sell && <Sell products={data} onClose={() => setSell(false)} onDone={(id) => router.push(`/billing/${id}`)} />}
       {buy && <Buy products={data} start={buy.start} onClose={() => setBuy(null)} onDone={done} />}
       {newSupplier && <FormModal title="New supplier" fields={supplierFields} onClose={() => setNewSupplier(false)}

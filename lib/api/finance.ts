@@ -20,6 +20,8 @@ route('GET', '/invoices', 'billing', async ({ query }) => {
   const where: string[] = [];
   if (status === 'due') where.push(`status IN ('unpaid','partial')`);
   else if (status) { params.push(status); where.push(`status=$${params.length}`); }
+  // Only bills that include shop products, for the Shop & Stock page.
+  if (query.get('kind') === 'shop') where.push(`EXISTS (SELECT 1 FROM invoice_items ii WHERE ii.invoice_id=invoices.id AND ii.item_type='product')`);
   if (term) { params.push(`%${term}%`); where.push(`(customer_name ILIKE $${params.length} OR invoice_no ILIKE $${params.length} OR customer_phone ILIKE $${params.length})`); }
   const rows = await q(`SELECT * FROM invoices ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY id DESC LIMIT 200`, params);
   const summary = await one(`SELECT

@@ -21,12 +21,12 @@ function byCustomer(bills: any[]): Owing[] {
 }
 
 /** Quick add → Collect dues: find who owes money, then take what they are paying now. */
-export function CollectDues({ onClose, onDone }: { onClose: () => void; onDone?: () => void }) {
+export function CollectDues({ onClose, onDone, shop }: { onClose: () => void; onDone?: () => void; /** Only what customers owe for shop sales. */ shop?: boolean }) {
   const [q, setQ] = useState('');
   const [term, setTerm] = useState('');
   const [picked, setPicked] = useState<Owing | null>(null);
   useEffect(() => { const t = setTimeout(() => setTerm(q), 250); return () => clearTimeout(t); }, [q]);
-  const { data, error } = useApi(`/invoices?status=due&q=${encodeURIComponent(term)}`);
+  const { data, error } = useApi(`/invoices?status=due${shop ? '&kind=shop' : ''}&q=${encodeURIComponent(term)}`);
   const people = useMemo(() => (data ? byCustomer(data.rows) : []), [data]);
 
   if (picked) {
@@ -55,13 +55,13 @@ export function CollectDues({ onClose, onDone }: { onClose: () => void; onDone?:
   }
 
   return (
-    <Modal title="Collect dues" subtitle="Choose the person who is paying what they owe." onClose={onClose}>
+    <Modal title={shop ? 'Customers who owe you' : 'Collect dues'} subtitle={shop ? 'Shop sales that are not fully paid. Choose a customer to collect.' : 'Choose the person who is paying what they owe.'} onClose={onClose}>
       <div className="relative mb-3">
         <Search className="absolute left-3 top-3 size-4 text-faint" />
         <input className="input !pl-9" autoFocus placeholder="Search name or phone number" aria-label="Search who owes" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
       {error ? <p className="text-rose text-[13px]">{error}</p> : !data ? <Loading /> : !people.length ? (
-        <p className="text-muted py-6 text-center">{term ? 'Nobody with dues matches this search.' : 'Nobody owes any money right now.'}</p>
+        <p className="text-muted py-6 text-center">{term ? 'Nobody with dues matches this search.' : shop ? 'No customer owes you for shop sales.' : 'Nobody owes any money right now.'}</p>
       ) : (
         <ul className="max-h-80 overflow-y-auto divide-y divide-line border border-line rounded-lg">
           {people.map((p) => (
