@@ -111,7 +111,7 @@ function AddMember({ onClose, onDone }: { onClose: () => void; onDone: (id: numb
 
   const sale = saleFields(plans.data, slots.data).map((f) => ({
     ...f, required: f.name === 'plan_id' ? false : f.required,
-    show: (v: any) => isNew(v) && (f.name === 'plan_id' || !!v.plan_id) && (!f.show || f.show(v)),
+    show: (v: any) => isNew(v) && (f.name === 'plan_id' || f.name === 'previous_due' || !!v.plan_id) && (!f.show || f.show(v)),
   }));
   const planOpts = plans.data.map((p) => ({ value: p.id, label: `${p.name}${p.active ? '' : ' (hidden)'}` }));
   const oldSlot = slotField(plans.data, slots.data);
@@ -137,11 +137,11 @@ function AddMember({ onClose, onDone }: { onClose: () => void; onDone: (id: numb
       onChangeValues={(name, v) => syncPay(settings.data, price)(name, v)}
       summary={(v) => (isNew(v) && v.plan_id ? <BillSummary settings={settings.data} gross={price(v)} discount={Number(v.discount) || 0} pay={Number(v.pay_amount) || 0} /> : null)}
       onSubmit={async (v) => {
-        const { kind, plan_id, slot_id, start_date, end_date, discount, pay_amount, pay_method, pay_cash, pay_online_method, pay_reference, old_payment, old_date,
+        const { kind, plan_id, slot_id, start_date, end_date, discount, pay_amount, pay_method, pay_cash, pay_online_method, pay_reference, previous_due,
           member_code, joined_on, balance_due, ...member } = v;
         const body = kind === 'existing'
           ? { ...member, kind, existing: { member_code, joined_on, plan_id, slot_id, start_date, end_date, balance_due: Number(balance_due) || 0 } }
-          : { ...member, kind, sale: plan_id ? toSale(v) : undefined };
+          : { ...member, kind, sale: plan_id ? toSale(v) : undefined, previous_due: plan_id ? undefined : Number(previous_due) || 0 };
         const r = await api('/members', { body });
         welcomeToast(member.name, r.welcome);
         onDone(r.member.id);
@@ -327,6 +327,19 @@ function Inner() {
           </div>
           {error ? <div className="p-4"><ErrorNote message={error} retry={reload} /></div> : !data ? <Loading /> : (
             <>
+              <div className="px-4 py-2.5 border-b border-line text-[13px] text-muted" aria-live="polite">
+                <b className="text-ink tabular-nums">{data.total}</b> {data.total === 1 ? 'member' : 'members'}
+                {(() => {
+                  const parts = [
+                    plan && plans.data?.find((p) => String(p.id) === plan)?.name && `on ${plans.data.find((p) => String(p.id) === plan).name}`,
+                    slot && slots.data?.find((s) => String(s.id) === slot) && `in ${slotLabel(slots.data.find((s) => String(s.id) === slot))}`,
+                    gender && (gender === 'male' ? 'boys' : 'girls'),
+                    status && FILTERS.find((f) => f.key === status)?.label,
+                    term && `matching “${term}”`,
+                  ].filter(Boolean);
+                  return parts.length ? <> · {parts.join(' · ')}</> : null;
+                })()}
+              </div>
               <Table rows={data.rows} onRow={(r) => router.push(`/members/${r.id}`)}
                 empty={<Empty icon={Users} title={term || status || slot || plan || gender ? 'No members match this filter' : 'No members yet'} text={term || status || slot || plan || gender ? 'Try another search or filter.' : 'Add your first member, or import everyone from your old software.'} action={!term && !status && !slot && !plan && !gender && !allBranches ? <Button variant="primary" onClick={() => setAdding(true)}>Add member</Button> : undefined} />}
                 cols={[

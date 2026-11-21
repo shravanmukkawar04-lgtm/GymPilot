@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { Db, insert, one, q, tenant, tx, update, widenToGym } from '../db';
 import { ApiError, bad, notFound, parse, route } from './router';
 import * as s from './schemas';
-import { checkPastDate, createInvoice, getSettings, pickSlot, sellMembership, slotLabel } from '../services/billing';
+import { addPreviousDue, checkPastDate, createInvoice, getSettings, pickSlot, sellMembership, slotLabel } from '../services/billing';
 import { setBiometricId } from '../services/attendance';
 import { sendRegistration } from '../services/messaging';
 import { savePhoto } from '../services/photos';
@@ -14,8 +14,8 @@ const memberSchema = z.object({
 });
 const saleSchema = z.object({
   plan_id: s.id, slot_id: s.idOpt, start_date: s.date, discount: s.moneyOpt, replace_current: s.bool, payment: s.payment,
-  /** Set for an old payment: the bill and its payments are dated this day instead of today. */
-  invoice_date: s.date,
+  /** What the member already owed before this sale. Added as its own bill. */
+  previous_due: s.moneyOpt,
 });
 const planSchema = z.object({
   name: s.reqText, duration_months: s.int, duration_days: s.int.default(0), price: s.money, description: s.text, active: s.bool,
@@ -66,11 +66,14 @@ route('GET', '/members', 'members', async ({ query }) => {
     params.push(`%${term}%`);
     where.push(`(name ILIKE $${params.length} OR phone ILIKE $${params.length} OR member_code ILIKE $${params.length})`);
   }
+  // The batch and plan also narrow the counts below, so the chips show the numbers for what is on screen.
+  const scope = ['NOT archived'];
+  const scopeParams: unknown[] = [];
   const slot = Number(query.get('slot_id'));
-  if (slot) { params.push(slot); where.push(`slot_id = $${params.length}`); }
+  if (slot) { params.push(slot); where.push(`slot_id = $${params.length}`); scopeParams.push(slot); scope.push(`slot_id = $${scopeParams.length}`); }
   // Members whose current membership is on this plan.
   const plan = Number(query.get('plan_id'));
-  if (plan) { params.push(plan); where.push(`membership_id IN (SELECT id FROM memberships WHERE plan_id = $${params.length})`); }
+  if (plan) { params.push(plan); where.push(`membership_id IN (SELECT id FROM memberships WHERE plan_id = $${params.length})`); scopeParams.push(plan); scope.push(`membership_id IN (SELECT id FROM memberships WHERE plan_id = $${scopeParams.length})`); }
   const page = Math.max(1, Number(query.get('page')) || 1);
   const limit = Math.min(200, Number(query.get('limit')) || 50);
   const clause = where.join(' AND ');
@@ -90,7 +93,7 @@ route('GET', '/members', 'members', async ({ query }) => {
       count(*) FILTER (WHERE left_on IS NULL AND joined_on >= date_trunc('month', gym_today()::timestamp)::date) AS new_month,
       count(*) FILTER (WHERE left_on IS NULL AND blocked) AS blocked,
       count(*) FILTER (WHERE left_on IS NOT NULL) AS "left"
-    FROM member_overview WHERE NOT archived`))!;
+    FROM member_overview WHERE ${scope.join(' AND ')}`, scopeParams))!;
   return { rows, total, page, limit, counts };
 });
 
@@ -132,15 +135,17 @@ route('POST', '/members', 'members', async ({ body, user }) => {
   const existing = body.kind === 'existing';
   const sale = !existing && body.sale ? parse(saleSchema, body.sale) : null;
   const old = existing ? parse(existingSchema, body.existing ?? {}) : null;
+  const previousDue = existing ? null : parse(z.object({ previous_due: s.moneyOpt }), body).previous_due;
   const result = await tx(async (db) => {
-    // Someone whose first payment was on an earlier date joined on that date.
     const m = await insert('members', {
-      ...data, joined_on: old?.joined_on ?? data.joined_on ?? sale?.invoice_date ?? undefined, member_code: old?.member_code || undefined, migrated: existing,
+      ...data, joined_on: old?.joined_on ?? data.joined_on ?? undefined, member_code: old?.member_code || undefined, migrated: existing,
     }, db);
     await setBiometricId(db, { member_id: m.id, staff_id: null }, biometric_id);
     await savePhoto(db, 'member', m.id, photo || undefined);
     if (old) await addExistingMembership(db, m, old, user.id);
     const r = sale ? await sellMembership(db, { member_id: m.id, ...sale, user_id: user.id }) : null;
+    // A new member can also arrive owing money from before, with or without a plan.
+    if (!existing && !sale?.previous_due) await addPreviousDue(db, { member_id: m.id, name: m.name, phone: m.phone }, previousDue, user.id, m.branch_id);
     return { member: m, invoice: r?.invoice ?? null };
   });
   // The member is saved even if the message cannot go out.

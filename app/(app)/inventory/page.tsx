@@ -47,8 +47,7 @@ function Sell({ products, onClose, onDone }: { products: any[]; onClose: () => v
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [touched, setTouched] = useState(false);
-  const [old, setOld] = useState(false);
-  const [oldDate, setOldDate] = useState('');
+  const [prevDue, setPrevDue] = useState('');
   const available = products.filter((p) => p.stock > 0);
   const rate = (pid: string) => products.find((p) => String(p.id) === pid);
   const lines = cart.flatMap((c) => { const p = rate(c.product_id); return p ? [{ gross: p.sale_price * c.qty, rate: p.gst_rate }] : []; });
@@ -96,15 +95,11 @@ function Sell({ products, onClose, onDone }: { products: any[]; onClose: () => v
         <div>{label('Received now (₹)', 'sp')}<input id="sp" className="input" type="number" min={0} step="any" value={amount} onChange={(e) => { setTouched(true); setPay({ ...pay, pay_amount: e.target.value }); }} /></div>
         <PayInputs pay={pay} setPay={setPay} amount={amount} />
       </div>
-      <label className="flex items-start gap-2.5 mt-3 cursor-pointer">
-        <input type="checkbox" className="mt-0.5 size-4 accent-[var(--color-brand)]" checked={old} onChange={(e) => setOld(e.target.checked)} />
-        <span><span className="text-ink">This is an old payment</span><span className="block text-muted text-[13px]">Tick it if the sale and money were already received on an earlier date. The bill and payment are dated that day.</span></span>
-      </label>
-      {old && (
-        <div className="mt-2 max-w-xs">{label('Sale / payment date', 'od')}
-          <input id="od" className="input" type="date" required max={todayIST()} value={oldDate} onChange={(e) => setOldDate(e.target.value)} />
-        </div>
-      )}
+      <div className="mt-3 max-w-xs">
+        {label('Previous due (₹) (optional)', 'pd')}
+        <input id="pd" className="input" type="number" min={0} step="any" placeholder="0" value={prevDue} onChange={(e) => setPrevDue(e.target.value)} />
+        <p className="text-muted text-[13px] mt-1">Money this customer already owed from before. It is added to what they owe, separately from this sale, and is not counted as income.</p>
+      </div>
       <div className="bg-canvas rounded-lg p-3 mt-4 flex items-center justify-between gap-3">
         <div>
           {!discError && discount > 0 && <div className="text-muted text-xs tabular-nums">{inr(subtotal)} − {inr(discount)} discount</div>}
@@ -120,12 +115,13 @@ function Sell({ products, onClose, onDone }: { products: any[]; onClose: () => v
           const items = cart.filter((c) => c.product_id);
           if (!items.length) return setErr('Choose at least one product');
           if (discError) return setErr(discError);
-          if (old && !oldDate) return setErr('Choose the date of the old payment');
+          if (prevDue !== '' && !(Number(prevDue) >= 0)) return setErr('Previous due is not a valid amount');
+          if (Number(prevDue) > 0 && !member && !walkIn.phone) return setErr('Add the customer’s name and phone so you know who owes the previous due');
           if ((Number(amount) || 0) > total + 0.005) return setErr('Received amount is more than the total after discount');
           setBusy(true); setErr(null);
           try {
             const r = await api('/products/sell', { body: {
-              items, member_id: member, discount: discount || null, payment: toPayment({ ...pay, pay_amount: amount }), invoice_date: old ? oldDate : null,
+              items, member_id: member, discount: discount || null, payment: toPayment({ ...pay, pay_amount: amount }), previous_due: Number(prevDue) || null,
               customer_name: member ? null : walkIn.name || null, customer_phone: member ? null : walkIn.phone || null,
             } });
             toast('Sale recorded'); onDone(r.invoice.id);
