@@ -3,49 +3,69 @@ import { useEffect, useState } from 'react';
 import { useUser } from '@/components/shell';
 import { Building2, Loader2, Plus, UserPlus } from 'lucide-react';
 import { api, photoUrl, toast, useApi } from '@/lib/client';
-import { Badge, Button, Card, Empty, ErrorNote, Field, FormFields, FormModal, Loading, PageHeader } from '@/components/ui';
+import { Badge, Button, Card, Empty, ErrorNote, Field, FormFields, FormModal, Loading, PageHeader, Tabs } from '@/components/ui';
 
-const GROUPS: { title: string; subtitle: string; fields: Field[] }[] = [
-  { title: 'Gym details', subtitle: 'Shown on your bills and messages', fields: [
-    { name: 'gym_photo', label: 'Gym photo or logo', type: 'photo', current: (v) => photoUrl('gym', v.gym_id, v.gym_photo_v) },
-    { name: 'gym_name', label: 'Gym name', required: true, full: true },
-    { name: 'address', label: 'Address', type: 'textarea' },
-    { name: 'phone', label: 'Phone' },
-    { name: 'email', label: 'Email', type: 'email' },
+type Group = { title: string; subtitle?: string; fields: Field[] };
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/** The settings, one tab per topic. Each card is one topic inside that tab. */
+const TABS: { key: string; label: string; groups?: Group[] }[] = [
+  { key: 'gym', label: 'Gym', groups: [
+    { title: 'Gym details', subtitle: 'Shown on your bills and messages', fields: [
+      { name: 'gym_photo', label: 'Gym photo or logo', type: 'photo', current: (v) => photoUrl('gym', v.gym_id, v.gym_photo_v) },
+      { name: 'gym_name', label: 'Gym name', required: true, full: true },
+      { name: 'address', label: 'Address', type: 'textarea' },
+      { name: 'phone', label: 'Phone' },
+      { name: 'email', label: 'Email', type: 'email' },
+    ] },
+    { title: 'Attendance and salaries', subtitle: 'Used to work out pay and spot members who stop coming', fields: [
+      { name: 'weekly_off', label: 'Weekly off day', type: 'select', required: true, options: [{ value: -1, label: 'No weekly off' }, ...WEEKDAYS.map((d, i) => ({ value: i, label: d }))] },
+      { name: 'inactive_days', label: 'Call a member inactive after (days)', type: 'number', min: 1, required: true },
+    ] },
   ] },
-  { title: 'GST and billing', subtitle: 'How your bills are calculated', fields: [
-    { name: 'gst_enabled', label: 'My gym charges GST', type: 'checkbox' },
-    { name: 'prices_include_gst', label: 'My prices already include GST', type: 'checkbox', help: 'If off, GST is added on top of your prices.', show: (v) => v.gst_enabled },
-    { name: 'gstin', label: 'GSTIN', placeholder: '27ABCDE1234F1Z5', show: (v) => v.gst_enabled },
-    { name: 'default_gst_rate', label: 'GST rate (%)', type: 'number', min: 0, required: true, show: (v) => v.gst_enabled },
-    { name: 'sac_code', label: 'SAC code', required: true, help: 'Confirm this with your accountant', show: (v) => v.gst_enabled },
-    { name: 'invoice_prefix', label: 'Bill number starts with', required: true },
-    { name: 'upi_id', label: 'UPI ID', placeholder: 'yourgym@upi', help: 'Used for the QR code on unpaid bills', full: true },
-    { name: 'invoice_terms', label: 'Terms printed on bills', type: 'textarea' },
+  { key: 'billing', label: 'Billing & GST', groups: [
+    { title: 'GST', subtitle: 'How tax is worked out on your bills', fields: [
+      { name: 'gst_enabled', label: 'My gym charges GST', type: 'checkbox' },
+      { name: 'prices_include_gst', label: 'My prices already include GST', type: 'checkbox', help: 'If off, GST is added on top of your prices.', show: (v) => v.gst_enabled },
+      { name: 'gstin', label: 'GSTIN', placeholder: '27ABCDE1234F1Z5', show: (v) => v.gst_enabled },
+      { name: 'default_gst_rate', label: 'GST rate (%)', type: 'number', min: 0, required: true, show: (v) => v.gst_enabled },
+      { name: 'sac_code', label: 'SAC code', required: true, help: 'Confirm this with your accountant', show: (v) => v.gst_enabled },
+    ] },
+    { title: 'Bills', subtitle: 'What is printed on every bill', fields: [
+      { name: 'invoice_prefix', label: 'Bill number starts with', required: true },
+      { name: 'upi_id', label: 'UPI ID', placeholder: 'yourgym@upi', help: 'Used for the QR code on unpaid bills' },
+      { name: 'invoice_terms', label: 'Terms printed on bills', type: 'textarea' },
+    ] },
   ] },
-  { title: 'Attendance and salaries', subtitle: 'Used to work out pay and spot members who stop coming', fields: [
-    { name: 'weekly_off', label: 'Weekly off day', type: 'select', required: true, options: [{ value: -1, label: 'No weekly off' }, ...['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((d, i) => ({ value: i, label: d }))] },
-    { name: 'inactive_days', label: 'Call a member inactive after (days)', type: 'number', min: 1, required: true },
+  { key: 'messages', label: 'Automatic messages', groups: [
+    { title: 'Members', subtitle: 'Sent on WhatsApp to the member, using the template of the same name in Messages.', fields: [
+      { name: 'auto_welcome', label: 'New member', type: 'checkbox', help: 'The registration message, when a member is added' },
+      { name: 'member_login_url', label: 'Login link in the registration message', placeholder: 'https://yourgym.com (optional)', full: true, show: (v) => !!v.auto_welcome,
+        help: 'Shown as "Login URL" in that message. Leave it blank if members have no login; it then shows a dash.' },
+      { name: 'auto_renewal', label: 'Membership renewed', type: 'checkbox', help: 'Renewal confirmation, when a membership is renewed or the plan is changed' },
+      { name: 'auto_expiry', label: 'Membership ending', type: 'checkbox', help: '7, 3 and 1 days before, on the day, and the day after' },
+      { name: 'auto_freeze', label: 'Membership put on hold', type: 'checkbox', help: 'When a hold is added' },
+      { name: 'auto_birthday', label: 'Birthday wishes', type: 'checkbox' },
+    ] },
+    { title: 'Payments', subtitle: 'For members and walk-in customers', fields: [
+      { name: 'auto_dues', label: 'Payment due', type: 'checkbox', help: 'Once a week while a member owes money' },
+      { name: 'auto_receipt', label: 'Payment received', type: 'checkbox', help: 'A receipt when money is collected on a bill later (not on the sale itself)' },
+    ] },
+    { title: 'Shop', fields: [
+      { name: 'auto_pos_sale', label: 'Shop sale', type: 'checkbox', help: 'Purchase confirmation, when a product is sold' },
+      { name: 'auto_pos_receipt', label: 'Shop payment received', type: 'checkbox', help: 'A receipt when a customer pays a shop balance later' },
+      { name: 'auto_pos_due', label: 'Shop payment due', type: 'checkbox', help: 'Once a week while a shop bill is unpaid' },
+    ] },
+    { title: 'Enquiries', fields: [
+      { name: 'auto_enquiry', label: 'Enquiry received', type: 'checkbox', help: 'When a new enquiry is added' },
+      { name: 'auto_followup', label: 'Enquiry follow-up', type: 'checkbox', help: 'On the follow-up date set on an enquiry' },
+    ] },
+    { title: 'Staff', fields: [
+      { name: 'auto_employee', label: 'New staff member', type: 'checkbox', help: 'A welcome message, when a staff member is added' },
+    ] },
   ] },
-  { title: 'Automatic reminders', subtitle: 'Prepared every day in Messages', fields: [
-    { name: 'auto_expiry', label: 'Membership ending', type: 'checkbox', help: '7, 3 and 1 days before, on the day, and the day after' },
-    { name: 'auto_dues', label: 'Payment due', type: 'checkbox', help: 'Once a week while money is owed' },
-    { name: 'auto_birthday', label: 'Birthday wishes', type: 'checkbox' },
-    { name: 'auto_welcome', label: 'Member registration message', type: 'checkbox', help: 'The Member registration template is sent on WhatsApp whenever a new member is added. Untick it to stop sending it.' },
-    { name: 'member_login_url', label: 'Login link in the registration message', placeholder: 'https://yourgym.com (optional)', full: true, show: (v) => !!v.auto_welcome,
-      help: 'Shown as "Login URL" in that message. Leave it blank if members have no login; it then shows a dash.' },
-  ] },
-  { title: 'More automatic messages', subtitle: 'Each one is sent on WhatsApp at the moment it happens, using its template. They are off until you turn them on. A message waits in Messages if its template is not approved yet.', fields: [
-    { name: 'auto_renewal', label: 'Membership renewed', type: 'checkbox', help: 'Renewal confirmation when a membership is renewed or the plan is changed' },
-    { name: 'auto_receipt', label: 'Payment received', type: 'checkbox', help: 'Payment receipt when money is collected against a bill later (not on the sale itself)' },
-    { name: 'auto_freeze', label: 'Membership put on hold', type: 'checkbox', help: 'Sent when a hold is added' },
-    { name: 'auto_enquiry', label: 'Enquiry received', type: 'checkbox', help: 'Sent when a new enquiry is added' },
-    { name: 'auto_followup', label: 'Enquiry follow-up', type: 'checkbox', help: 'Sent on the follow-up date set on an enquiry' },
-    { name: 'auto_pos_sale', label: 'Shop sale', type: 'checkbox', help: 'Purchase confirmation when a product is sold' },
-    { name: 'auto_pos_receipt', label: 'Shop payment received', type: 'checkbox', help: 'Receipt when a customer pays a shop balance later' },
-    { name: 'auto_pos_due', label: 'Shop payment due', type: 'checkbox', help: 'Once a week while a shop bill is unpaid' },
-    { name: 'auto_employee', label: 'New staff member', type: 'checkbox', help: 'Welcome message when a staff member is added' },
-  ] },
+  { key: 'branches', label: 'Branches' },
+  { key: 'account', label: 'My account' },
 ];
 
 export default function SettingsPage() {
@@ -55,33 +75,51 @@ export default function SettingsPage() {
   const [err, setErr] = useState<string | null>(null);
   const [pw, setPw] = useState(false);
   const [photo, setPhoto] = useState(false);
+  const [tab, setTab] = useState('gym');
   const me = useUser();
   useEffect(() => { if (data) setV({ ...data, gym_photo: undefined, weekly_off: data.weekly_off ?? -1 }); }, [data]);
   if (error) return <ErrorNote message={error} retry={reload} />;
   if (!v) return <Loading />;
+  const current = TABS.find((t) => t.key === tab)!;
   return (
     <>
-    <form onSubmit={async (e) => {
-      e.preventDefault(); setBusy(true); setErr(null);
-      try { await api('/settings', { method: 'PUT', body: v }); toast('Settings saved'); if (v.gym_photo !== undefined) window.location.reload(); else reload(); } catch (x: any) { setErr(x.message); }
-      setBusy(false);
-    }}>
       <PageHeader title="Settings" help="Set these once and the rest of the app follows.">
-        <Button type="button" onClick={() => setPhoto(true)}>My photo</Button>
-        <Button type="button" onClick={() => setPw(true)}>Change my password</Button>
-        <Button variant="primary" type="submit" disabled={busy}>{busy && <Loader2 className="animate-spin" />}Save changes</Button>
+        {current.groups && <Button variant="primary" type="submit" form="settings-form" disabled={busy}>{busy && <Loader2 className="animate-spin" />}Save changes</Button>}
       </PageHeader>
+      <Tabs value={tab} onChange={setTab} tabs={TABS.map((t) => ({ key: t.key, label: t.label }))} />
       {err && <div className="mb-4"><ErrorNote message={err} /></div>}
-      <div className="grid lg:grid-cols-2 gap-4 items-start">
-        {GROUPS.map((g) => (
-          <Card key={g.title} title={g.title} subtitle={g.subtitle}>
-            <FormFields fields={g.fields} values={v} set={(n, x) => setV({ ...v, [n]: x })} />
-          </Card>
-        ))}
-      </div>
-    </form>
+      {/* One form and one set of values for every settings tab, so a change on one tab is kept (and saved) while you look at another. Only the open tab's fields are on screen. */}
+      {current.groups && (
+        <form id="settings-form" className="max-w-3xl space-y-4" onSubmit={async (e) => {
+          e.preventDefault(); setBusy(true); setErr(null);
+          try { await api('/settings', { method: 'PUT', body: v }); toast('Settings saved'); if (v.gym_photo !== undefined) window.location.reload(); else reload(); } catch (x: any) { setErr(x.message); }
+          setBusy(false);
+        }}>
+          {tab === 'messages' && (
+            <p className="text-muted text-[13px]">
+              Each message is sent on WhatsApp at the moment it happens. If its template is not approved by WhatsApp yet, it waits in Messages for you to send. Members who opted out of WhatsApp are skipped.
+              Turn on only the ones you want.
+            </p>
+          )}
+          {current.groups.map((g) => (
+            <Card key={g.title} title={g.title} subtitle={g.subtitle}>
+              <FormFields fields={g.fields} values={v} set={(n, x) => setV({ ...v, [n]: x })} />
+            </Card>
+          ))}
+        </form>
+      )}
       {/* Outside the settings form: these have forms of their own. */}
-      <div className="mt-4"><Branches /></div>
+      {tab === 'branches' && <div className="max-w-3xl"><Branches /></div>}
+      {tab === 'account' && (
+        <div className="max-w-3xl">
+          <Card title="My account" subtitle={`${me.name} · ${me.email}`}>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" onClick={() => setPhoto(true)}>Change my photo</Button>
+              <Button type="button" onClick={() => setPw(true)}>Change my password</Button>
+            </div>
+          </Card>
+        </div>
+      )}
       {photo && <FormModal title="My photo" subtitle="Shown next to your name in the menu." submitLabel="Save photo" onClose={() => setPhoto(false)}
         fields={[{ name: 'photo', label: 'Photo', type: 'photo', current: () => photoUrl('user', me.id, me.photo_v) }]} initial={{ name: me.name }}
         onSubmit={async (x) => { if (x.photo !== undefined) await api('/auth/photo', { body: { photo: x.photo } }); toast('Photo saved'); window.location.reload(); }} />}
