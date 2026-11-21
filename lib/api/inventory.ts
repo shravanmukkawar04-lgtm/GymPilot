@@ -3,6 +3,7 @@ import { insert, one, q, tx, update } from '../db';
 import { bad, notFound, parse, route } from './router';
 import * as s from './schemas';
 import { addPreviousDue, createInvoice, Line } from '../services/billing';
+import { notifyShopSale } from '../services/notify';
 
 const productSchema = z.object({
   sku: s.text, name: s.reqText, category: s.reqText, unit: s.text.transform((v) => v ?? 'pcs'), hsn: s.text,
@@ -52,7 +53,7 @@ route('POST', '/products/sell', 'inventory', async ({ body, user }) => {
     previous_due: s.moneyOpt,
     items: z.array(z.object({ product_id: s.id, qty: z.coerce.number().int().min(1) })).min(1, 'add at least one product'),
   }), body);
-  return tx(async (db) => {
+  const sold = await tx(async (db) => {
     const member = v.member_id ? await one<any>('SELECT * FROM members WHERE id=$1', [v.member_id], db) : null;
     const lines: Line[] = [];
     let branch: number | null = null;
@@ -76,6 +77,8 @@ route('POST', '/products/sell', 'inventory', async ({ body, user }) => {
     }
     return { invoice };
   });
+  await notifyShopSale(sold.invoice.id);
+  return sold;
 });
 
 route('GET', '/stock-movements', 'inventory', async () => q(`

@@ -6,6 +6,7 @@ import { addPreviousDue, checkPastDate, createInvoice, getSettings, pickSlot, se
 import { setBiometricId } from '../services/attendance';
 import { sendRegistration } from '../services/messaging';
 import { savePhoto } from '../services/photos';
+import { notifyFreeze, notifyRenewal } from '../services/notify';
 
 const memberSchema = z.object({
   name: s.reqText, phone: s.phone, email: s.email, gender: s.text, dob: s.date, address: s.text, occupation: s.text,
@@ -239,7 +240,9 @@ route('POST', '/members/:id/archive', 'members', async ({ params, body }) => {
 
 route('POST', '/members/:id/membership', 'members', async ({ params, body, user }) => {
   const sale = parse(saleSchema, body);
-  return tx((db) => sellMembership(db, { member_id: Number(params.id), ...sale, user_id: user.id }));
+  const r = await tx((db) => sellMembership(db, { member_id: Number(params.id), ...sale, user_id: user.id }));
+  await notifyRenewal(r.membership.id, r.invoice.id);
+  return r;
 });
 
 /** Blocks a member from entering (their scans and front-desk check-ins are flagged), or lifts the block. */
@@ -303,7 +306,7 @@ route('POST', '/memberships/:id/freeze', 'members', async ({ params, body }) => 
     start_date: s.reqDate, end_date: s.date, days: z.coerce.number().int().min(1).max(365).nullish(), reason: s.text,
   }), body);
   if (!v.end_date && !v.days) throw bad('Choose the date the hold ends');
-  return tx(async (db) => {
+  const result = await tx(async (db) => {
     const ms = await one<any>(`SELECT * FROM memberships WHERE id=$1 AND status='active' FOR UPDATE`, [params.id], db);
     if (!ms) throw notFound('Membership not found');
     const { end_date, days } = (await one<{ end_date: string; days: number }>(
@@ -316,8 +319,10 @@ route('POST', '/memberships/:id/freeze', 'members', async ({ params, body }) => 
     if (overlap) throw bad('This membership already has a hold in those dates');
     await db.query(`INSERT INTO membership_freezes (membership_id, start_date, end_date, reason) VALUES ($1,$2::date,$3::date,$4)`, [ms.id, v.start_date, end_date, v.reason]);
     const updated = await one<any>(`UPDATE memberships SET end_date = end_date + $2::int WHERE id=$1 RETURNING *`, [ms.id, days], db);
-    return { ...updated, frozen_days: days };
+    return { ...updated, frozen_days: days, hold_end: end_date };
   });
+  await notifyFreeze(result, v.start_date, result.hold_end);
+  return result;
 });
 
 /* ---------- Plans and time slots ---------- */

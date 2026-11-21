@@ -3,6 +3,7 @@ import { insert, one, q, tx, update } from '../db';
 import { bad, notFound, parse, route } from './router';
 import * as s from './schemas';
 import { sellMembership } from '../services/billing';
+import { notifyEnquiry } from '../services/notify';
 
 const STATUSES = ['new', 'contacted', 'trial', 'follow_up', 'won', 'lost'] as const;
 const leadSchema = z.object({
@@ -29,11 +30,13 @@ route('GET', '/leads', 'leads', async () => {
 
 route('POST', '/leads', 'leads', async ({ body, user }) => {
   const data = parse(leadSchema, body);
-  return tx(async (db) => {
+  const l = await tx(async (db) => {
     const l = await insert('leads', data, db);
     await db.query(`INSERT INTO lead_activities (lead_id, type, note, created_by) VALUES ($1,'status','Enquiry added',$2)`, [l.id, user.id]);
     return l;
   });
+  await notifyEnquiry(l);
+  return l;
 });
 
 route('GET', '/leads/:id', 'leads', async ({ params }) => {

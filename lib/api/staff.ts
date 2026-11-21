@@ -4,6 +4,7 @@ import { insert, one, q, tx, update } from '../db';
 import { bad, notFound, parse, route } from './router';
 import * as s from './schemas';
 import { setBiometricId } from '../services/attendance';
+import { notifyNewStaff } from '../services/notify';
 
 const staffSchema = z.object({
   name: s.reqText, phone: s.phoneOpt, email: s.email, role_title: s.reqText, is_trainer: s.bool,
@@ -31,11 +32,13 @@ route('GET', '/staff', 'trainers', async ({ query }) => {
 
 route('POST', '/staff', 'trainers', async ({ body }) => {
   const { biometric_id, ...data } = parse(staffSchema, body);
-  return tx(async (db) => {
+  const st = await tx(async (db) => {
     const st = await insert('staff', { ...data, joined_on: data.joined_on ?? undefined }, db);
     await setBiometricId(db, { member_id: null, staff_id: st.id }, biometric_id);
     return st;
   });
+  await notifyNewStaff(st);
+  return st;
 });
 
 route('PUT', '/staff/:id', 'trainers', async ({ params, body }) => {

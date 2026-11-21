@@ -582,6 +582,16 @@ ALTER TABLE plans ADD COLUMN IF NOT EXISTS slot_ids int[] NOT NULL DEFAULT '{}';
 ALTER TABLE memberships ADD COLUMN IF NOT EXISTS slot_id int REFERENCES slots(id) ON DELETE SET NULL;
 ALTER TABLE memberships ADD COLUMN IF NOT EXISTS slot_name text;
 ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_welcome boolean NOT NULL DEFAULT true;
+-- More automatic messages, one switch each. They start off, so nobody gets a message the owner did not choose.
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_receipt boolean NOT NULL DEFAULT false;
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_renewal boolean NOT NULL DEFAULT false;
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_pos_sale boolean NOT NULL DEFAULT false;
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_pos_receipt boolean NOT NULL DEFAULT false;
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_pos_due boolean NOT NULL DEFAULT false;
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_freeze boolean NOT NULL DEFAULT false;
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_employee boolean NOT NULL DEFAULT false;
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_enquiry boolean NOT NULL DEFAULT false;
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_followup boolean NOT NULL DEFAULT false;
 -- A supplier payment also shows in Expenses, so profit in Reports counts it.
 ALTER TABLE expenses ADD COLUMN IF NOT EXISTS supplier_payment_id int REFERENCES supplier_payments(id) ON DELETE CASCADE;
 CREATE UNIQUE INDEX IF NOT EXISTS expenses_supplier_payment ON expenses (supplier_payment_id);

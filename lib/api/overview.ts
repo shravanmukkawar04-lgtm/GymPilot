@@ -4,7 +4,7 @@ import { one, q, tx, update } from '../db';
 import { ApiError, bad, notFound, parse, route } from './router';
 import * as s from './schemas';
 import { branchCookie, can, clearCookie, PERMISSIONS, sessionCookie } from './session';
-import { runAutomations } from '../services/messaging';
+import { runAllAutomations } from '../services/notify';
 import { getSettings } from '../services/billing';
 import { syncWhatsAppCostsIfStale } from '../services/wa-costs';
 import { photoResponse, PhotoKind, savePhoto } from '../services/photos';
@@ -94,7 +94,7 @@ const SHOP_SHARE = `COALESCE((SELECT sum(ii.amount) FILTER (WHERE ii.item_type='
 route('GET', '/dashboard', 'dashboard', async ({ user }) => {
   if (!can(user.role, 'billing')) return trainerDashboard(user.staff_id ?? -1);
   // A savepoint, so a failure here cannot spoil the rest of the request.
-  await tx(() => runAutomations()).catch((e) => console.error('[automations]', e));
+  await tx(() => runAllAutomations()).catch((e) => console.error('[automations]', e));
   await tx(() => syncWhatsAppCostsIfStale()).catch((e) => console.error('[whatsapp costs]', e));
 
   const [kpis, chart, recent, setup] = await Promise.all([
@@ -190,6 +190,8 @@ const settingsSchema = z.object({
   upi_id: s.text, invoice_prefix: z.string().trim().regex(/^[A-Za-z0-9-]{1,6}$/, 'must be 1 to 6 letters or numbers'), invoice_terms: s.text,
   weekly_off: z.coerce.number().int().min(-1).max(6).nullish().transform((v) => (v === -1 || v === null || v === undefined ? null : v)),
   inactive_days: z.coerce.number().int().min(1).max(365), auto_expiry: s.bool, auto_dues: s.bool, auto_birthday: s.bool, auto_welcome: s.bool, member_login_url: s.text,
+  auto_receipt: s.bool, auto_renewal: s.bool, auto_pos_sale: s.bool, auto_pos_receipt: s.bool, auto_pos_due: s.bool,
+  auto_freeze: s.bool, auto_employee: s.bool, auto_enquiry: s.bool, auto_followup: s.bool,
 });
 
 // Every screen that bills needs the GST settings, so anyone logged in may read them. Only the owner changes them.

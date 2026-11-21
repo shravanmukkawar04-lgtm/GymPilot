@@ -3,7 +3,8 @@ import { asTenant, insert, one, q, tx, update } from '../db';
 import { bad, notFound, parse, route } from './router';
 import { costHistory, syncWhatsAppCosts } from '../services/wa-costs';
 import * as s from './schemas';
-import { AUTO_VARS, channelStatus, countAudience, flushQueue, processCampaign, queueAudience, runAutomations } from '../services/messaging';
+import { AUTO_VARS, channelStatus, countAudience, flushQueue, processCampaign, queueAudience } from '../services/messaging';
+import { runAllAutomations } from '../services/notify';
 import {
   deleteSubmittedTemplate, editSubmittedTemplate, encrypt, listRemoteTemplates, liveNumberStatus, submitTemplate, templateSlug, validateForMeta, verifyConnection, waConfig,
 } from '../services/whatsapp';
@@ -17,7 +18,7 @@ const AUDIENCES = ['all', 'active', 'expiring', 'expired', 'dues', 'inactive', '
 
 route('GET', '/comms/overview', 'comms', async () => {
   // A savepoint, so a failure here cannot spoil the rest of the request.
-  await tx(() => runAutomations()).catch((e) => console.error('[automations]', e));
+  await tx(() => runAllAutomations()).catch((e) => console.error('[automations]', e));
   const [queue, templates, counts, channels] = await Promise.all([
     q(`SELECT * FROM messages WHERE status IN ('queued','failed') ORDER BY id DESC LIMIT 200`),
     q(`SELECT * FROM message_templates ORDER BY id`),
@@ -250,7 +251,7 @@ route('GET', '/cron/reminders', 'public', async ({ req }) => {
   const gyms = await q<{ id: number }>('SELECT id FROM gyms WHERE active ORDER BY id');
   const results: Record<number, unknown> = {};
   for (const g of gyms) {
-    results[g.id] = await asTenant(g.id, null, () => runAutomations()).catch((e) => ({ error: String(e?.message ?? e) }));
+    results[g.id] = await asTenant(g.id, null, () => runAllAutomations()).catch((e) => ({ error: String(e?.message ?? e) }));
   }
   return { gyms: gyms.length, results };
 });

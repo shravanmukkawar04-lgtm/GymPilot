@@ -160,7 +160,7 @@ export async function membersVars(members: any[], s: any) {
   return new Map(members.map((m) => [m.id, memberVars(m, s, billing.get(m.id))] as const));
 }
 
-async function queueOne(db: Db | undefined, a: {
+export async function queueOne(db: Db | undefined, a: {
   member_id?: number | null; lead_id?: number | null; to_name: string; phone?: string | null; email?: string | null;
   channel: string; template?: any; subject?: string | null; body: string; vars: Record<string, unknown>;
   origin: string; dedupe_key?: string | null; user_id?: number | null; campaign_id?: number | null;

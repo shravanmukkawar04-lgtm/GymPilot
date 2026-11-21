@@ -134,6 +134,7 @@ export async function collectDues(db: Db, invoiceIds: number[], payments: Paymen
   if (total > owed) throw bad(`Amount is more than they owe (₹${rupees(owed)})`);
   const left = bills.map((b) => ({ id: b.id, p: paise(b.balance) }));
   const touched = new Set<number>();
+  const applied: { invoice_id: number; amount: number; method: string; paid_on: string | null }[] = [];
   for (const pay of payments) {
     let remaining = paise(pay.amount);
     for (const b of left) {
@@ -142,9 +143,10 @@ export async function collectDues(db: Db, invoiceIds: number[], payments: Paymen
       if (chunk <= 0) continue;
       await addPayment(db, b.id, { ...pay, amount: rupees(chunk) }, userId);
       b.p -= chunk; remaining -= chunk; touched.add(b.id);
+      applied.push({ invoice_id: b.id, amount: rupees(chunk), method: pay.method, paid_on: pay.paid_on ?? null });
     }
   }
-  return { bills: touched.size, still_due: rupees(owed - total) };
+  return { bills: touched.size, still_due: rupees(owed - total), applied };
 }
 
 /** Records one or more payments, for example ₹1000 cash and ₹1500 UPI on the same bill. */

@@ -35,6 +35,17 @@ const GROUPS: { title: string; subtitle: string; fields: Field[] }[] = [
     { name: 'member_login_url', label: 'Login link in the registration message', placeholder: 'https://yourgym.com (optional)', full: true, show: (v) => !!v.auto_welcome,
       help: 'Shown as "Login URL" in that message. Leave it blank if members have no login; it then shows a dash.' },
   ] },
+  { title: 'More automatic messages', subtitle: 'Each one is sent on WhatsApp at the moment it happens, using its template. They are off until you turn them on. A message waits in Messages if its template is not approved yet.', fields: [
+    { name: 'auto_renewal', label: 'Membership renewed', type: 'checkbox', help: 'Renewal confirmation when a membership is renewed or the plan is changed' },
+    { name: 'auto_receipt', label: 'Payment received', type: 'checkbox', help: 'Payment receipt when money is collected against a bill later (not on the sale itself)' },
+    { name: 'auto_freeze', label: 'Membership put on hold', type: 'checkbox', help: 'Sent when a hold is added' },
+    { name: 'auto_enquiry', label: 'Enquiry received', type: 'checkbox', help: 'Sent when a new enquiry is added' },
+    { name: 'auto_followup', label: 'Enquiry follow-up', type: 'checkbox', help: 'Sent on the follow-up date set on an enquiry' },
+    { name: 'auto_pos_sale', label: 'Shop sale', type: 'checkbox', help: 'Purchase confirmation when a product is sold' },
+    { name: 'auto_pos_receipt', label: 'Shop payment received', type: 'checkbox', help: 'Receipt when a customer pays a shop balance later' },
+    { name: 'auto_pos_due', label: 'Shop payment due', type: 'checkbox', help: 'Once a week while a shop bill is unpaid' },
+    { name: 'auto_employee', label: 'New staff member', type: 'checkbox', help: 'Welcome message when a staff member is added' },
+  ] },
 ];
 
 export default function SettingsPage() {
