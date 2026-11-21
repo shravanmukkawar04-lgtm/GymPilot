@@ -30,7 +30,8 @@ export function can(role: string, permission: string) {
 
 const COOKIE = 'gp_session';
 const BRANCH_COOKIE = 'gp_branch';
-const MAX_AGE = 60 * 60 * 24 * 7;
+// A login lasts one day, then the person signs in again.
+const MAX_AGE = 60 * 60 * 24;
 
 function secret() {
   const s = process.env.JWT_SECRET;
@@ -64,6 +65,8 @@ export async function currentUser(req: NextRequest): Promise<SessionUser | null>
   try {
     const { payload } = await jwtVerify(token, secret());
     userId = Number(payload.sub);
+    // Logins made before the one-day rule carry a longer expiry, so also check how old the login is.
+    if (!payload.iat || Date.now() / 1000 - payload.iat > MAX_AGE) return null;
   } catch (e: any) {
     if (e?.code?.startsWith?.('ERR_J')) return null;
     throw e;
