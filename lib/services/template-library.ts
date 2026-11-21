@@ -1,5 +1,5 @@
 /**
- * The WhatsApp template library: 19 service (Meta) templates and 2 broadcast templates, taken from the
+ * The WhatsApp template library: service (Meta) templates taken from the
  * "WhatsApp Meta Template & Broadcast Guide".
  *
  * - `key` is the exact Meta template name. It must not change, and the variables keep their positions
@@ -68,32 +68,11 @@ export const TEMPLATE_LIBRARY: LibraryTemplate[] = [
       '*This message was sent by {{gym_name}}. Please do not reply to this message.*'),
   },
   {
-    key: 'addonenrollmentconfirmation', name: 'Add-on enrollment confirmation', subject: 'Add-on enrollment confirmation', category: 'UTILITY',
-    body: lines('*Add-On Enrollment Confirmation*', '', 'Dear {{name}},', '', 'Your add-on enrollment has been completed successfully.', '',
-      '*Enrollment Details*', '• Package: {{addon_package}}', '• Total Fee: {{addon_total_fee}}', '• Paid Amount: {{addon_paid_amount}}', '• Payment Method: {{addon_payment_method}}',
-      '• Due Amount: {{addon_amount_due}}', '• Start Date: {{addon_start_date}}', '• Expiry Date: {{addon_expiry_date}}', '',
-      'If you have any questions regarding your enrollment, please contact us at {{contact_phone}} or {{contact_email}}.', '', 'Regards,', '{{gym_name}}', '', NOTE),
-  },
-  {
-    key: 'addonpackageexpiryreminder', name: 'Add-on package expiry reminder', subject: 'Add-on package expiry reminder', category: 'UTILITY',
-    body: lines('*Add-On Package Expiry Reminder*', '', 'Dear {{name}},', '', 'This is a reminder that your enrolled add-on package is scheduled to expire in *{{addon_days_left}}* day(s).', '',
-      '*Expiry Details*', '• Add-On Package: {{addon_package}}', '• Expiry Date: {{addon_expiry_date}}', '',
-      'To continue using your add-on service without interruption, please renew your enrollment before the expiry date.', '',
-      'If you have any questions regarding your add-on enrollment, please contact us at {{contact_phone}} or {{contact_email}}.', '', 'Regards,', '{{gym_name}}', '', NOTE),
-  },
-  {
     key: 'todaypackageexpirynotice', name: 'Package expires today', subject: 'Package expiry notice', category: 'UTILITY',
     body: lines('*Package Expiry Notice*', '', 'Dear {{name}},', '', 'This is a reminder that your enrolled package expires today.', '',
       '*Package Details*', '• Package: {{package}}', '• Expiry Date: {{expiry_date}}', '',
       'To avoid interruption to your enrolled service, please renew your package today if you wish to continue using it.', '',
       'If you have any questions regarding your enrollment, please contact us at {{contact_phone}} or {{contact_email}}.', '', 'Regards,', '{{gym_name}}', '', NOTE),
-  },
-  {
-    key: 'todayaddonpackageexpiry', name: 'Add-on package expires today', subject: 'Add-on package expiry notice', category: 'UTILITY',
-    body: lines('*Add-On Package Expiry Notice*', '', 'Dear {{name}},', '', 'This is a reminder that your enrolled add-on package expires today.', '',
-      '*Package Details*', '• Add-On Package: {{addon_package}}', '• Expiry Date: {{addon_expiry_date}}', '',
-      'To avoid interruption to your enrolled add-on service, please renew your enrollment today if you wish to continue using it.', '',
-      'If you have any questions regarding your add-on enrollment, please contact us at {{contact_phone}} or {{contact_email}}.', '', 'Regards,', '{{gym_name}}', '', NOTE),
   },
   {
     key: 'membershipfreezenotification', name: 'Membership freeze notification', subject: 'Membership freeze notification', category: 'UTILITY',
@@ -149,20 +128,6 @@ export const TEMPLATE_LIBRARY: LibraryTemplate[] = [
       'Thank you for choosing {{gym_name}}.', '', NOTE),
   },
 
-  /* ---------- Broadcast templates: separate from the 19 above, and their names must start with "broadcast_" ---------- */
-  {
-    key: 'broadcast_gym_holiday_notification', name: 'Broadcast: gym holiday notification', subject: 'Gym holiday notice', category: 'MARKETING',
-    // The guide's example names its own gym here; this says "our gym" so it suits any gym.
-    body: lines('*GYM HOLIDAY NOTICE*', '', 'Dear Member,', '', 'Please be informed that *our gym will remain closed tomorrow due to a holiday.*', '',
-      '🏋 *Gym Status:* Closed Tomorrow', '⏰ *Regular sessions will resume the following day as per normal timings.*', '',
-      'We appreciate your understanding and continued support.', '', '💪 *Stay Fit • Stay Strong • Stay Healthy*', '━━━━━━━━━━━━━━', NOTE),
-  },
-  {
-    key: 'broadcast_gym_holiday_notification_variable', name: 'Broadcast: gym holiday notification (with gym name)', subject: 'Gym holiday announcement', category: 'MARKETING',
-    body: lines('📢 *GYM HOLIDAY ANNOUNCEMENT*', '', 'Dear Members,', '', 'Please be informed that our *Gym will remain CLOSED tomorrow* due to a holiday.', '',
-      '🗓 *Tomorrow: HOLIDAY*', '🏋 Regular gym sessions will resume from the following day as per normal timings.', '',
-      'Thank you for your understanding and continued support. ❤', '', '*Stay Fit • Stay Strong • Stay Healthy* 💪', '', 'Regards', '{{gym_name}}', '', NOTE),
-  },
 ];
 
 /** Adds any library template a gym does not have yet. Never changes one that is already there. Returns how many were added. */

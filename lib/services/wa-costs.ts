@@ -2,6 +2,9 @@ import { one, q } from '../db';
 import { fetchPricing, waConfig } from './whatsapp';
 
 const HOUR = 3600_000;
+// Cost figures change slowly and Meta settles them over a day or two, so the saved copy is reused this long.
+// The Refresh button on the Messages page reads Meta straight away.
+const COST_TTL = 3 * 24 * HOUR;
 
 /** The India date of a moment, so a day's cost is filed under the gym's own calendar. */
 const istDay = (unix: number) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date(unix * 1000));
@@ -44,13 +47,13 @@ export async function syncWhatsAppCosts() {
   }
 }
 
-/** Used when the owner opens the dashboard: tries again at most every six hours (hourly after an error), so it never slows each visit. */
+/** Used when the owner opens the dashboard: reads Meta again only when the saved costs are 3 days old (hourly after an error), so it never slows each visit. */
 export async function syncWhatsAppCostsIfStale() {
   const row = await one<{ costs_tried_at: string | null; costs_error: string | null; connected: boolean }>(
     `SELECT costs_tried_at, costs_error, access_token_enc IS NOT NULL AS connected FROM whatsapp_settings`);
   if (!row?.connected) return;
   const age = row.costs_tried_at ? Date.now() - new Date(row.costs_tried_at).getTime() : Infinity;
-  if (age < (row.costs_error ? HOUR : 6 * HOUR)) return;
+  if (age < (row.costs_error ? HOUR : COST_TTL)) return;
   await syncWhatsAppCosts();
 }
 

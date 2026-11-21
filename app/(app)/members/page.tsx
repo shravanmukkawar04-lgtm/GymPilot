@@ -123,7 +123,7 @@ function AddMember({ onClose, onDone }: { onClose: () => void; onDone: (id: numb
     { ...oldSlot, show: (v) => isOld(v) && !!oldSlot.show?.(v) },
     { name: 'start_date', label: 'Plan started on', type: 'date', required: (v) => !!v.plan_id, show: (v) => isOld(v) && !!v.plan_id },
     { name: 'end_date', label: 'Plan ends on', type: 'date', required: (v) => !!v.plan_id, show: (v) => isOld(v) && !!v.plan_id },
-    { name: 'balance_due', label: 'Amount they still owe (₹)', type: 'number', min: 0, show: isOld, help: 'Only what is unpaid. Money already paid in the old system is not added to your income again.' },
+    { name: 'balance_due', label: 'Previous due (₹)', type: 'number', min: 0, show: isOld, help: 'Only the amount they have not paid yet. It will show as pending.' },
   ];
   const fields: Field[] = [
     { name: 'kind', label: 'Who are you adding?', type: 'choice', options: [{ value: 'new', label: 'New member' }, { value: 'existing', label: 'Existing member (moving from old system)' }] },

@@ -418,7 +418,7 @@ function CostHistory() {
       <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
         <div>
           <div className="font-semibold text-ink">Message cost</div>
-          <div className="text-muted text-[13px]">{data.synced_at ? `Read from Meta on ${fmtDateTime(data.synced_at)}. Meta can take a day to settle the latest charges.` : 'Not read from Meta yet.'}</div>
+          <div className="text-muted text-[13px]">{data.synced_at ? `Read from Meta on ${fmtDateTime(data.synced_at)}. Meta can take a day to settle the latest charges. Updated automatically every 3 days, or press Read from Meta.` : 'Not read from Meta yet.'}</div>
         </div>
         <Button size="sm" disabled={busy} onClick={refresh}><RefreshCw /> Read from Meta</Button>
       </div>

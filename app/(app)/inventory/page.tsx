@@ -98,7 +98,7 @@ function Sell({ products, onClose, onDone }: { products: any[]; onClose: () => v
       <div className="mt-3 max-w-xs">
         {label('Previous due (₹) (optional)', 'pd')}
         <input id="pd" className="input" type="number" min={0} step="any" placeholder="0" value={prevDue} onChange={(e) => setPrevDue(e.target.value)} />
-        <p className="text-muted text-[13px] mt-1">Money this customer already owed from before. It is added to what they owe, separately from this sale, and is not counted as income.</p>
+        <p className="text-muted text-[13px] mt-1">Money this customer still has to pay from before. It will show as pending.</p>
       </div>
       <div className="bg-canvas rounded-lg p-3 mt-4 flex items-center justify-between gap-3">
         <div>

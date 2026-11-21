@@ -69,7 +69,7 @@ export function saleFields(plans: any[], slots: any[] = []): Field[] {
 /** For a customer who already owed money before this sale. It is kept as its own bill, so it shows under what they owe and adds no income. */
 export const previousDueField: Field = {
   name: 'previous_due', label: 'Previous due (₹)', type: 'number', min: 0,
-  help: 'Money they already owed from before. It is added to what they owe, separately from this sale, and is not counted as income.',
+  help: 'Money they still have to pay from before. It will show as pending.',
 };
 
 export const toSale = (v: any) => ({
