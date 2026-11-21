@@ -194,7 +194,10 @@ route('GET', '/product-sales', 'inventory', async () => {
     ORDER BY i.invoice_date DESC, i.id DESC LIMIT 200`);
   const summary = await one(`SELECT
       COALESCE(sum(balance) FILTER (WHERE status IN ('unpaid','partial')),0) owed,
-      COALESCE(sum(total) FILTER (WHERE status <> 'cancelled' AND date_trunc('month',invoice_date)=date_trunc('month',gym_today()::timestamp)),0) AS month
+      COALESCE(sum(total) FILTER (WHERE status <> 'cancelled' AND date_trunc('month',invoice_date)=date_trunc('month',gym_today()::timestamp)),0) AS month,
+      COALESCE(sum(paid) FILTER (WHERE status <> 'cancelled' AND date_trunc('month',invoice_date)=date_trunc('month',gym_today()::timestamp)),0) AS month_paid,
+      COALESCE(sum(total) FILTER (WHERE status <> 'cancelled' AND invoice_date=gym_today()),0) AS today,
+      count(*) FILTER (WHERE status <> 'cancelled' AND date_trunc('month',invoice_date)=date_trunc('month',gym_today()::timestamp)) AS month_bills
     FROM invoices i WHERE EXISTS (SELECT 1 FROM invoice_items ii WHERE ii.invoice_id=i.id AND ii.item_type='product')`);
   return { rows, summary };
 });

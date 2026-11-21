@@ -364,11 +364,12 @@ export default function InventoryPage() {
         <Button onClick={() => setSell(true)}><ShoppingCart /> Sell</Button>
         <Button variant="primary" onClick={() => setEdit(blank)}><Plus /> Add product</Button>
       </PageHeader>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-4">
         <Stat label="Stock value at cost" value={inr(value)} hint={`${data.length} products`} />
         <Stat label="Running low" value={data.filter((p) => p.low).length} tone={data.some((p) => p.low) ? 'amber' : undefined} />
         <Stat label="You owe suppliers" value={inr(purchases.data?.summary.owed ?? 0)} tone={purchases.data?.summary.owed > 0 ? 'red' : undefined} hint={`Bought this month: ${inr(purchases.data?.summary.month ?? 0)}`} />
-        <Stat label="Customers owe you" value={inr(sales.data?.summary.owed ?? 0)} tone={sales.data?.summary.owed > 0 ? 'amber' : undefined} hint={`Sold this month: ${inr(sales.data?.summary.month ?? 0)}`} />
+        <Stat label="Sales this month" value={inr(sales.data?.summary.month ?? 0)} hint={`Today ${inr(sales.data?.summary.today ?? 0)} · Received ${inr(sales.data?.summary.month_paid ?? 0)} · ${sales.data?.summary.month_bills ?? 0} bills`} />
+        <Stat label="Customers owe you" value={inr(sales.data?.summary.owed ?? 0)} tone={sales.data?.summary.owed > 0 ? 'amber' : undefined} />
       </div>
       <Tabs value={tab} onChange={setTab} tabs={[
         { key: 'stock', label: 'Stock' }, { key: 'sales', label: 'Sales' }, { key: 'purchases', label: 'Purchases' },
