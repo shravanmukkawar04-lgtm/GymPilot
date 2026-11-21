@@ -39,10 +39,7 @@ function ChartTip({ active, payload, label }: any) {
 const SETUP = [
   { key: 'profile', label: 'Add your gym details and GST number', href: '/settings' },
   { key: 'plans', label: 'Create your membership plans', href: '/members?tab=plans' },
-  { key: 'staff', label: 'Add your trainers and staff', href: '/trainers' },
   { key: 'members', label: 'Add your first member', href: '/members?new=1' },
-  { key: 'device', label: 'Connect your fingerprint machine', href: '/attendance?tab=devices' },
-  { key: 'leads', label: 'Record your first enquiry', href: '/leads?new=1' },
 ];
 
 const noData = (what: string) => <Empty icon={BarChart3} title="Nothing to show yet" text={what} />;
