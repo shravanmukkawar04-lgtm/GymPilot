@@ -62,7 +62,7 @@ route('POST', '/auth/login', 'public', async ({ body, req, setCookie }) => {
     throw new ApiError(401, 'Wrong email or password');
   }
   attempts.delete(key);
-  if (!u.gym_active) throw new ApiError(403, 'This gym account is paused. Please contact GymPilot support.');
+  if (!u.gym_active) throw new ApiError(403, 'This gym account is paused. Please contact Kineto support.');
   setCookie(await sessionCookie(u.id, req));
 });
 

@@ -1,4 +1,4 @@
-# GymPilot
+# Kineto
 
 Gym management software built with Next.js and Neon PostgreSQL. One website serves many gyms, and each gym can have several branches.
 
@@ -43,7 +43,7 @@ In **All branches** view the owner can see everything together, for example on t
 
 5. Set `SUPERADMIN_KEY`, open http://localhost:3000/superadmin and create your first gym. Then log in at http://localhost:3000 with the owner email and password.
 
-Optional sample data to explore with: `npm run db:seed` creates a demo gym (login `demo@gympilot.test` / `demo12345`). To wipe everything and start clean: `npm run db:reset -- --yes`, then `npm run db:setup`.
+Optional sample data to explore with: `npm run db:seed` creates a demo gym (login `demo@kineto.test` / `demo12345`). To wipe everything and start clean: `npm run db:reset -- --yes`, then `npm run db:setup`.
 
 For production: `npm run build`, then `npm start`.
 
@@ -57,7 +57,7 @@ Works with machines that support **ZKTeco ADMS / PUSH** (often labelled Cloud Se
 
 Once connected, the app also talks back to the machine. **Register finger** on a member's profile (or **Register a finger** on the Machines tab) gives the person a number, adds them to the machine and starts fingerprint capture. **Send people** pushes everyone who has a number. Some models cannot start capture remotely, in which case register the finger on the machine using the number shown.
 
-The machine needs to reach the server over the network. Many machines only speak plain HTTP, and hosts such as Vercel force HTTPS. If yours is HTTP-only, run GymPilot on a PC at the gym or on a small VPS instead.
+The machine needs to reach the server over the network. Many machines only speak plain HTTP, and hosts such as Vercel force HTTPS. If yours is HTTP-only, run Kineto on a PC at the gym or on a small VPS instead.
 
 Other brands can send scans to `POST /api/biometric/punch` with header `x-device-key` (shown on the Machines tab) and body `{ "user_id": "101", "time": "2026-11-09 07:15:00" }`. The response includes `allowed`, which a turnstile can use.
 

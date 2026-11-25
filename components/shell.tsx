@@ -3,11 +3,12 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import {
-  BarChart3, Building2, CalendarCheck, Dumbbell, Fingerprint, LayoutDashboard, LogOut, Megaphone, Menu, MessageCircle, Package,
+  BarChart3, Building2, Dumbbell, Fingerprint, LayoutDashboard, LogOut, Megaphone, Menu, MessageCircle, Package,
   Plus, ReceiptText, Search, Settings, UserCog, Users, Wallet, HandCoins,
 } from 'lucide-react';
 import { api, photoUrl } from '@/lib/client';
 import { Avatar, Loading, Toaster } from './ui';
+import { LogoMark } from './logo';
 
 const NAV = [
   { group: '', items: [{ href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, perm: 'dashboard' }] },
@@ -149,7 +150,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         {state.gym_photo_v
           // eslint-disable-next-line @next/next/no-img-element
           ? <img src={photoUrl('gym', state.gym_id, state.gym_photo_v)!} alt="" className="size-8 rounded-lg object-cover" />
-          : <span className="flex size-8 items-center justify-center rounded-lg bg-brand text-white"><CalendarCheck className="size-[18px]" /></span>}
+          : <LogoMark className="size-8 shrink-0" />}
         <span className="font-semibold text-white truncate">{state.gym_name}</span>
       </div>
       <div className="flex-1 overflow-y-auto px-2.5 pb-3">

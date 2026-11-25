@@ -6,7 +6,7 @@
  *   npm run db:templates -- --keep-approved   delete the others, except ones already sent to WhatsApp (pending or approved)
  *
  * Messages that used a deleted template stay in the history. Templates already approved by WhatsApp stay on
- * WhatsApp; only the copy in GymPilot is removed. The library's own templates are never deleted.
+ * WhatsApp; only the copy in Kineto is removed. The library's own templates are never deleted.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';

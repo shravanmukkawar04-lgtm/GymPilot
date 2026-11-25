@@ -6,7 +6,7 @@ import * as s from './schemas';
 import { createGym } from '../services/gyms';
 
 /**
- * The hidden super admin, for whoever runs GymPilot as a service.
+ * The hidden super admin, for whoever runs Kineto as a service.
  * Every route needs the x-super-key header to match SUPERADMIN_KEY (24+ characters);
  * otherwise it answers 404, as if it did not exist. These queries see every gym.
  */

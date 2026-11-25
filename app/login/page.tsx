@@ -1,8 +1,9 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { BellRing, CalendarCheck, Fingerprint, Loader2, ReceiptText } from 'lucide-react';
+import { BellRing, Fingerprint, Loader2, ReceiptText } from 'lucide-react';
 import { api } from '@/lib/client';
 import { Button, ErrorNote, Loading } from '@/components/ui';
+import { BRAND, LogoMark } from '@/components/logo';
 
 const HIGHLIGHTS = [
   { icon: Fingerprint, text: 'Fingerprint attendance' },
@@ -38,7 +39,6 @@ export default function LoginPage() {
 
   if (loadErr) return <div className="max-w-md mx-auto p-6 mt-20"><ErrorNote message={`${loadErr} Check that DATABASE_URL is correct and that "npm run db:setup" has been run.`} /></div>;
   if (!state) return <Loading />;
-  const brand = 'GymPilot';
   const input = (name: string, label: string, type = 'text', help?: string) => (
     <div>
       <label htmlFor={name} className="block text-[13px] font-medium text-ink mb-1">{label}</label>
@@ -54,8 +54,8 @@ export default function LoginPage() {
         <div className="absolute inset-0 bg-gradient-to-t from-ink via-ink/55 to-ink/25" />
         <div className="relative h-full flex flex-col justify-between p-5 sm:p-8 lg:p-12">
           <div className="flex items-center gap-2.5">
-            <span className="flex size-10 items-center justify-center rounded-xl bg-brand"><CalendarCheck className="size-5" /></span>
-            <span className="text-lg font-semibold">{brand}</span>
+            <LogoMark className="size-10" />
+            <span className="text-lg font-semibold tracking-tight">{BRAND}</span>
           </div>
           <div>
             <h2 className="!text-white text-2xl sm:text-3xl lg:text-5xl font-semibold leading-tight max-w-xl">Run your whole gym from one screen.</h2>
@@ -88,7 +88,7 @@ export default function LoginPage() {
           <Button variant="primary" type="submit" disabled={busy} className="w-full !h-11">
             {busy && <Loader2 className="animate-spin" />}Log in
           </Button>
-          <p className="text-muted text-[13px] text-center">New gym? Contact GymPilot and we will set up your account.</p>
+          <p className="text-muted text-[13px] text-center">New gym? Contact {BRAND} and we will set up your account.</p>
         </form>
       </main>
     </div>

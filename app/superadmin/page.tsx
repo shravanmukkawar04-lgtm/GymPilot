@@ -1,8 +1,9 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
-import { Building2, KeyRound, LogOut, Plus, UserPlus } from 'lucide-react';
+import { Building2, LogOut, Plus, UserPlus } from 'lucide-react';
 import { fmtDate, toast } from '@/lib/client';
 import { Avatar, Badge, Button, Card, Confirm, Empty, ErrorNote, FormModal, Loading, Toaster } from '@/components/ui';
+import { LogoMark } from '@/components/logo';
 
 const KEY = 'gp_super_key';
 
@@ -37,7 +38,7 @@ function KeyForm({ onDone, failed }: { onDone: () => void; failed: boolean }) {
   return (
     <div className="min-h-dvh flex items-center justify-center p-6 bg-canvas">
       <form className="w-full max-w-sm bg-surface border border-line rounded-2xl p-6 space-y-4" onSubmit={(e) => { e.preventDefault(); sessionStorage.setItem(KEY, key.trim()); onDone(); }}>
-        <div className="flex items-center gap-2"><KeyRound className="size-5 text-brand" /><h1 className="text-xl font-semibold">GymPilot admin</h1></div>
+        <div className="flex items-center gap-2"><LogoMark className="size-7" /><h1 className="text-xl font-semibold">Kineto admin</h1></div>
         <p className="text-muted">Enter the super admin key (SUPERADMIN_KEY on the server).</p>
         <input className="input !h-11" type="password" autoFocus required value={key} onChange={(e) => setKey(e.target.value)} aria-label="Super admin key" autoComplete="off" />
         {failed && <ErrorNote message="That key is not right, or SUPERADMIN_KEY is not set on the server (it must be at least 24 characters)." />}
@@ -76,7 +77,7 @@ export default function SuperAdminPage() {
       <div className="max-w-5xl mx-auto p-4 sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
           <div>
-            <h1 className="text-[22px] font-semibold">Gyms on GymPilot</h1>
+            <h1 className="text-[22px] font-semibold">Gyms on Kineto</h1>
             <p className="text-muted mt-0.5">Create a gym account for each customer. Each gym only ever sees its own data.</p>
           </div>
           <div className="flex gap-2">
@@ -143,7 +144,7 @@ export default function SuperAdminPage() {
         onSubmit={async (v) => { await sapi('/gyms', v); toast(`${v.gym_name} is ready. The owner can log in now.`); load(); }} />}
 
       {pause && <Confirm danger={pause.active} title={pause.active ? `Pause ${pause.gym_name}?` : `Resume ${pause.gym_name}?`}
-        text={pause.active ? 'Everyone at this gym is logged out and cannot log in, and its fingerprint machines and reminders stop. No data is deleted.' : 'The gym can log in and use GymPilot again.'}
+        text={pause.active ? 'Everyone at this gym is logged out and cannot log in, and its fingerprint machines and reminders stop. No data is deleted.' : 'The gym can log in and use Kineto again.'}
         confirmLabel={pause.active ? 'Pause gym' : 'Resume gym'} onClose={() => setPause(null)}
         onConfirm={async () => { await sapi(`/gyms/${pause.id}/active`, { active: !pause.active }); toast(pause.active ? 'Gym paused' : 'Gym resumed'); load(); }} />}
 

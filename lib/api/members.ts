@@ -125,7 +125,7 @@ async function addExistingMembership(db: Db, member: any, v: z.output<typeof exi
     await createInvoice(db, {
       member_id: member.id, customer_name: member.name, customer_phone: member.phone, user_id: userId,
       items: [{ description: 'Balance carried over from the previous system', qty: 1, rate: v.balance_due, type: 'other', gst_rate: 0 }],
-      notes: 'Opening balance when this member was moved to GymPilot',
+      notes: 'Opening balance when this member was moved to Kineto',
     });
   }
 }

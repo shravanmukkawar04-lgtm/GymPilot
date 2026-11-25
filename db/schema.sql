@@ -1,4 +1,4 @@
--- GymPilot schema. Safe to run repeatedly.
+-- Kineto schema. Safe to run repeatedly.
 
 CREATE OR REPLACE FUNCTION gym_today() RETURNS date LANGUAGE sql STABLE AS
 $$ SELECT (now() AT TIME ZONE 'Asia/Kolkata')::date $$;

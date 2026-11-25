@@ -5,7 +5,7 @@ import { processPunch, manualCheck } from '../lib/services/attendance';
 
 /** Creates a demo gym full of realistic sample data, so you can explore the app. Log in with the email and password printed at the end. */
 
-const DEMO_EMAIL = process.env.SEED_EMAIL || 'demo@gympilot.test';
+const DEMO_EMAIL = process.env.SEED_EMAIL || 'demo@kineto.test';
 const DEMO_PASSWORD = process.env.SEED_PASSWORD || 'demo12345';
 
 const FIRST = ['Rohan', 'Priya', 'Amit', 'Sneha', 'Vikram', 'Neha', 'Arjun', 'Kavya', 'Rahul', 'Pooja', 'Siddharth', 'Ananya', 'Karan', 'Meera', 'Aditya', 'Isha', 'Nikhil', 'Riya', 'Manish', 'Divya', 'Yash', 'Tanvi', 'Harsh', 'Shreya', 'Omkar', 'Gauri', 'Sagar', 'Aarti', 'Tejas', 'Nisha', 'Pranav', 'Sakshi', 'Akash', 'Komal', 'Varun', 'Swati'];

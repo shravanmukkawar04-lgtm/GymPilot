@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 
-export const metadata: Metadata = { title: 'GymPilot', description: 'Gym management made simple' };
+export const metadata: Metadata = { title: 'Kineto', description: 'Gym management that keeps your gym moving' };
 export const viewport: Viewport = { width: 'device-width', initialScale: 1 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

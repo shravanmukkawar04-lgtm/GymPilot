@@ -213,7 +213,7 @@ function ImportMembers({ onClose, onDone }: { onClose: () => void; onDone: () =>
         <li>Choose the file below, check the preview, then import.</li>
       </ol>
       <div className="flex flex-wrap gap-2 mb-4">
-        <Button onClick={() => downloadCsv('gympilot-members-template', [{
+        <Button onClick={() => downloadCsv('kineto-members-template', [{
           Name: 'Rohan Sharma', Phone: '9876543210', 'Member ID': 'OLD-101', Email: '', Gender: 'Male', 'Date of birth': '15-08-1995', Occupation: 'Engineer',
           Address: '', 'Joined on': '01-02-2025', Plan: 'Quarterly', Slot: 'Morning', 'Plan start': '01-10-2026', 'Plan end': '31-12-2026', 'Balance due': '500', Notes: '',
         }])}><Download /> Download template</Button>
@@ -223,7 +223,7 @@ function ImportMembers({ onClose, onDone }: { onClose: () => void; onDone: () =>
         </label>
       </div>
       <p className="text-muted text-[13px] mb-4">
-        Dates can be 25-03-2026, 25/03/2026 or 2026-03-25. Plan and slot names should match the ones set up in GymPilot;
+        Dates can be 25-03-2026, 25/03/2026 or 2026-03-25. Plan and slot names should match the ones set up in Kineto;
         if a plan is not found, the member still gets their plan dates. Members whose phone number is already in this branch are skipped.
       </p>
       {err && <div className="mb-3"><ErrorNote message={err} /></div>}

@@ -99,7 +99,7 @@ export async function dispatch(req: NextRequest, path: string[]) {
     const scoped = r.access !== 'public' && r.access !== 'super';
     if (scoped) {
       if (!user) throw new ApiError(401, 'Please log in');
-      if (!user.gym_active) throw new ApiError(403, 'This gym account is paused. Please contact GymPilot support.');
+      if (!user.gym_active) throw new ApiError(403, 'This gym account is paused. Please contact Kineto support.');
       if (r.access !== 'any' && !can(user.role, r.access)) throw new ApiError(403, 'You do not have access to this section');
       if (user.branch_id === -1) throw new ApiError(403, 'Your login is not linked to an active branch. Ask the gym owner to check it.');
     }
