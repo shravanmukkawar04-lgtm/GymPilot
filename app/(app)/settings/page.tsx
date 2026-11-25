@@ -5,7 +5,7 @@ import { Building2, Eye, Loader2, MessageSquareText, Plus, UserPlus } from 'luci
 import { api, photoUrl, toast, useApi } from '@/lib/client';
 import { Badge, Button, Card, Empty, ErrorNote, Field, FormFields, FormModal, Loading, Modal, PageHeader, Tabs } from '@/components/ui';
 import { PhoneMock, WaStatus, withSamples } from '@/components/whatsapp-preview';
-import { AUTO_TEMPLATES } from '@/lib/automation-templates';
+import { AUTO_LABELS, AUTO_TEMPLATES, unfilledBlanks } from '@/lib/automation-templates';
 
 type Group = { title: string; subtitle?: string; fields: Field[] };
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -40,7 +40,7 @@ const TABS: { key: string; label: string; groups?: Group[] }[] = [
     ] },
   ] },
   { key: 'messages', label: 'Automatic messages', groups: [
-    { title: 'Members', subtitle: 'Sent on WhatsApp to the member, using the template of the same name in Messages.', fields: [
+    { title: 'Members', subtitle: 'Sent on WhatsApp to the member. Choose which template each one sends; templates are made in Messages.', fields: [
       { name: 'auto_welcome', label: 'New member', type: 'checkbox', help: 'The registration message, when a member is added' },
       { name: 'member_login_url', label: 'Login link in the registration message', placeholder: 'https://yourgym.com (optional)', full: true, show: (v) => !!v.auto_welcome,
         help: 'Shown as "Login URL" in that message. Leave it blank if members have no login; it then shows a dash.' },
@@ -70,25 +70,47 @@ const TABS: { key: string; label: string; groups?: Group[] }[] = [
   { key: 'account', label: 'My account' },
 ];
 
-/** Under an automatic-message switch: which template it sends, where that template stands with WhatsApp, and a preview. */
-function TemplateNote({ flag, templates, onPreview }: { flag: string; templates: any[] | null; onPreview: (t: any) => void }) {
+/**
+ * Under an automatic-message switch: a choice of which template it sends (the built-in one unless another is chosen),
+ * where that template stands with WhatsApp, a preview, and a warning for any blank the message cannot fill.
+ */
+function TemplateChoice({ flag, templates, chosen, onChoose, onPreview }: {
+  flag: string; templates: any[] | null; chosen: Record<string, number>; onChoose: (key: string, id: number | null) => void; onPreview: (t: any) => void;
+}) {
   const keys = AUTO_TEMPLATES[flag] ?? [];
   if (!keys.length || !templates) return null;
   return (
-    <ul className="mt-0.5 space-y-1">
+    <div className="mt-1 space-y-2">
       {keys.map((k) => {
-        const t = templates.find((x) => x.key === k);
-        if (!t) return <li key={k} className="text-rose text-xs">The template “{k}” is missing. Add it in Messages, under Templates.</li>;
+        const builtIn = templates.find((x) => x.key === k);
+        const id = chosen[k] && templates.some((x) => x.id === chosen[k]) ? chosen[k] : builtIn?.id;
+        const t = templates.find((x) => x.id === id) ?? null;
+        const missing = unfilledBlanks(k, t);
         return (
-          <li key={k} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px]">
-            <MessageSquareText className="size-3.5 shrink-0 text-faint" aria-hidden />
-            <span className="text-muted">Sends</span> <span className="font-medium text-ink">{t.name}</span>
-            <WaStatus t={t} />
-            <button type="button" className="inline-flex items-center gap-1 text-brand hover:underline" onClick={() => onPreview(t)}><Eye className="size-3.5" /> Preview</button>
-          </li>
+          <div key={k} className="text-[12.5px]">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <MessageSquareText className="size-3.5 shrink-0 text-faint" aria-hidden />
+              <label htmlFor={`tpl-${k}`} className="text-muted">{AUTO_LABELS[k] ? `${AUTO_LABELS[k]}, sends` : 'Sends'}</label>
+              <select id={`tpl-${k}`} className="input !h-8 !w-auto max-w-full text-[12.5px]" value={id ?? ''}
+                onChange={(e) => onChoose(k, e.target.value ? Number(e.target.value) : null)}>
+                {!id && <option value="">Choose a template</option>}
+                {templates.map((x) => <option key={x.id} value={x.id}>{x.name}{x.key === k ? ' (built-in)' : ''}</option>)}
+              </select>
+              {t && <WaStatus t={t} />}
+              {t?.wa_category === 'MARKETING' && <Badge tone="amber">Meta: Marketing</Badge>}
+              {t && <button type="button" className="inline-flex items-center gap-1 text-brand hover:underline" onClick={() => onPreview(t)}><Eye className="size-3.5" /> Preview</button>}
+            </div>
+            {!t && <p className="text-rose text-xs mt-1">No template is chosen, so this message is not sent. Choose one above.</p>}
+            {missing.length > 0 && (
+              <p className="text-amber text-xs mt-1">
+                This message cannot fill {missing.map((m) => `{{${m}}}`).join(', ')}, so {missing.length > 1 ? 'they are' : 'it is'} sent as a dash.
+                {missing.some((m) => /^\d+$/.test(m)) && ' In Messages, under Templates, edit the template and replace each number with what it holds, like {{name}} or {{expiry_date}}. Renaming blanks does not need approval again.'}
+              </p>
+            )}
+          </div>
         );
       })}
-    </ul>
+    </div>
   );
 }
 
@@ -129,7 +151,10 @@ export default function SettingsPage() {
           )}
           {current.groups.map((g) => (
             <Card key={g.title} title={g.title} subtitle={g.subtitle}>
-              <FormFields fields={g.fields.map((f) => (AUTO_TEMPLATES[f.name] ? { ...f, note: () => <TemplateNote flag={f.name} templates={templates.data} onPreview={setPreview} /> } : f))} values={v} set={(n, x) => setV({ ...v, [n]: x })} />
+              <FormFields fields={g.fields.map((f) => (AUTO_TEMPLATES[f.name] ? { ...f, note: () => (
+                <TemplateChoice flag={f.name} templates={templates.data} chosen={v.auto_template_ids ?? {}} onPreview={setPreview}
+                  onChoose={(k, id) => setV({ ...v, auto_template_ids: { ...(v.auto_template_ids ?? {}), [k]: id } })} />
+              ) } : f))} values={v} set={(n, x) => setV({ ...v, [n]: x })} />
             </Card>
           ))}
         </form>

@@ -239,22 +239,36 @@ export const countAudience = async (audience: string) => {
   return (await one<{ c: number }>(`SELECT count(*) c FROM member_overview WHERE ${AUDIENCE_SQL[audience]} AND left_on IS NULL AND NOT whatsapp_opt_out`))!.c;
 };
 
-/** Which library template each automatic reminder uses. */
+/** Which built-in template each automatic reminder uses, unless the owner chose another in Settings. */
 const AUTOMATION_TEMPLATES = {
   expiry: 'packageexpiryreminder', today: 'todaypackageexpirynotice', expired: 'packageexpirednotification',
   dues: 'memberpaymentduereminder', birthday: 'happybirthday',
 };
 
+/**
+ * The template an automatic message sends: the one chosen for it in Settings, otherwise the built-in template with that key.
+ * Returns null when neither exists (for example the template was deleted), and the message is then not sent.
+ */
+export async function automationTemplate(s: any, key: string) {
+  const chosen = Number(s?.auto_template_ids?.[key]);
+  if (chosen) {
+    const t = await one<any>('SELECT * FROM message_templates WHERE id=$1', [chosen]);
+    if (t) return t;
+  }
+  return one<any>('SELECT * FROM message_templates WHERE key=$1', [key]);
+}
+
 /** Creates today's reminders. Repeat runs add nothing, because each reminder has a unique key. */
 export async function runAutomations() {
   const db = undefined; // the request's own connection
   const s = await getSettings();
-  const templates = Object.fromEntries((await q<any>('SELECT * FROM message_templates WHERE key IS NOT NULL')).map((t) => [t.key, t]));
+  const templates: Record<string, any> = {};
+  for (const [which, key] of Object.entries(AUTOMATION_TEMPLATES)) templates[which] = await automationTemplate(s, key);
   const today = (await one<{ d: string }>('SELECT gym_today() d'))!.d;
   let created = 0;
 
   const add = async (m: any, which: keyof typeof AUTOMATION_TEMPLATES, dedupe: string) => {
-    const template = templates[AUTOMATION_TEMPLATES[which]];
+    const template = templates[which];
     if (!template) return;
     if (await one('SELECT 1 FROM messages WHERE dedupe_key=$1', [dedupe])) return; // already made, so skip the lookups
     const vars = (await membersVars([m], s)).get(m.id)!;
@@ -287,14 +301,14 @@ export async function runAutomations() {
 }
 
 /**
- * Sends the "Member registration" message to a newly added member. Sends at once when WhatsApp Business is connected
+ * Sends the "Member registration" message (or the template chosen for it in Settings) to a newly added member. Sends at once when WhatsApp Business is connected
  * and the template is approved; otherwise it waits in Messages for one-click sending.
  */
 export async function sendRegistration(memberId: number): Promise<{ status: 'sent' | 'queued' | 'failed' | 'skipped'; error?: string | null }> {
-  const t = await one<any>(`SELECT * FROM message_templates WHERE key='memberregistration'`);
+  const s = await getSettings();
+  const t = await automationTemplate(s, 'memberregistration');
   const m = await one<any>('SELECT * FROM member_overview WHERE id=$1', [memberId]);
   if (!t || !m?.phone) return { status: 'skipped' };
-  const s = await getSettings();
   const vars = (await membersVars([m], s)).get(m.id)!;
   const r = await queueOne(undefined, {
     member_id: m.id, to_name: m.name, phone: m.phone, email: m.email, channel: 'whatsapp', template: t, body: t.body,

@@ -19,6 +19,8 @@ const blanks = (body: string, auto: string[]) => [...new Set([...body.matchAll(V
 const pretty = (v: string) => v.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
 const fill = (body: string, values: Record<string, string>) => body.replace(VAR, (m, k) => values[k] || SAMPLE_VALUES[k] || m);
 const isReady = (t: any) => !!t?.wa_template_name && (!t.wa_status || t.wa_status === 'APPROVED');
+/** A template's text with its blanks' names left out. WhatsApp sees blanks by position, so renaming one changes nothing it approved. */
+const shape = (x: string | null | undefined) => (x ?? '').replace(VAR, '{{}}');
 const fmtClock = (t: string) => { const [h, m] = t.split(':').map(Number); return `${h % 12 || 12}${m ? `:${String(m).padStart(2, '0')}` : ''} ${h < 12 ? 'AM' : 'PM'}`; };
 
 const CATEGORY_LABEL: Record<string, string> = { UTILITY: 'Utility', MARKETING: 'Marketing', AUTHENTICATION: 'Authentication' };
@@ -243,6 +245,8 @@ function TemplateEditor({ t, d, onClose, onDone }: { t: any; d: any; onClose: ()
   };
   const preview = fill(v.body ?? '', { gym_name: d.gym_name, holiday_name: 'Diwali', holiday_date: '8 Nov', reopen_date: '10 Nov', open_time: '7 AM', close_time: '12 PM' });
   const canSubmit = d.channels.whatsapp_api && (!submitted || t.wa_status === 'REJECTED');
+  const needsReapproval = submitted && t.wa_status !== 'REJECTED' && (shape(v.body) !== shape(t.body) || shape(v.header) !== shape(t.header) || (v.footer || null) !== (t.footer || null));
+  const numbered = /\{\{\s*\d+\s*\}\}/.test(v.body ?? '');
 
   return (
     <Modal wide title={t.id ? 'Edit template' : 'Create a template'} subtitle="Write once, reuse whenever you send." onClose={onClose}>
@@ -256,6 +260,12 @@ function TemplateEditor({ t, d, onClose, onDone }: { t: any; d: any; onClose: ()
           ]} />
           <label htmlFor="tbody" className="block text-[13px] font-medium text-ink mt-3.5 mb-1">Message<span className="text-rose"> *</span></label>
           <textarea id="tbody" ref={box} rows={5} className="input" value={v.body ?? ''} onChange={(e) => setV({ ...v, body: e.target.value })} />
+          {numbered && (
+            <p className="text-amber text-xs mt-1.5">
+              This template has numbered blanks, so the app cannot tell what goes in them. Replace each number with what it holds, like {'{{name}}'} or {'{{expiry_date}}'}, so automatic messages fill it in.
+              {submitted && ' Renaming blanks keeps the WhatsApp approval.'}
+            </p>
+          )}
           <div className="flex flex-wrap gap-1.5 mt-2">
             {[...d.auto_vars, 'holiday_name', 'holiday_date', 'reopen_date'].map((x: string) => <button type="button" key={x} onClick={() => insert(x)} className="h-7 px-2.5 rounded-md bg-canvas text-[12px] font-medium text-muted hover:text-ink">+ {pretty(x)}</button>)}
           </div>
@@ -274,7 +284,7 @@ function TemplateEditor({ t, d, onClose, onDone }: { t: any; d: any; onClose: ()
       {err && <div className="mt-4"><ErrorNote message={err} /></div>}
       <div className="flex flex-wrap justify-end gap-2 mt-5">
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button disabled={busy || !v.name || !v.body} onClick={() => save(false)}>{submitted && t.wa_status !== 'REJECTED' ? 'Save and send for re-approval' : 'Save'}</Button>
+        <Button disabled={busy || !v.name || !v.body} onClick={() => save(false)}>{needsReapproval ? 'Save and send for re-approval' : 'Save'}</Button>
         {canSubmit && <Button variant="primary" disabled={busy || !v.name || !v.body} onClick={() => save(true)}>Save and send for approval</Button>}
       </div>
     </Modal>
@@ -306,11 +316,15 @@ function Templates({ d, reload, openSetup }: { d: any; reload: () => void; openS
             <span className="inline-flex gap-1.5" onClick={(e) => e.stopPropagation()}>
               {d.channels.whatsapp_api && (!r.wa_template_id || r.wa_status === 'REJECTED') && <Button size="sm" disabled={busy} onClick={() => run(() => api(`/comms/templates/${r.id}/submit`, { body: {} }), 'Sent to Meta for approval')}>Send for approval</Button>}
               <Button size="sm" variant="ghost" aria-label="Edit template" onClick={() => setEdit(r)}><Pencil /></Button>
-              {!r.key && <Button size="sm" variant="ghost" aria-label="Delete template" onClick={() => setDel(r)}><Trash2 /></Button>}
+              <Button size="sm" variant="ghost" aria-label="Delete template" onClick={() => setDel(r)}><Trash2 /></Button>
             </span>) },
         ]} />
       {edit && <TemplateEditor t={edit} d={d} onClose={() => setEdit(null)} onDone={reload} />}
-      {del && <Confirm danger title={`Delete "${del.name}"?`} text={del.wa_template_name ? 'It will also be deleted from your WhatsApp Business account.' : 'This cannot be undone.'} confirmLabel="Delete" onClose={() => setDel(null)} onConfirm={async () => { await api(`/comms/templates/${del.id}`, { method: 'DELETE' }); toast('Template deleted'); reload(); }} />}
+      {del && <Confirm danger title={`Delete "${del.name}"?`} confirmLabel="Delete"
+        text={[
+          del.wa_template_name ? 'It will also be deleted from your WhatsApp Business account.' : 'This cannot be undone.',
+          (del.key || Object.values(d.auto_template_ids ?? {}).includes(del.id)) && 'An automatic message uses it. After deleting, choose another template for it in Settings, under Automatic messages, or it stops being sent.',
+        ].filter(Boolean).join(' ')} onClose={() => setDel(null)} onConfirm={async () => { await api(`/comms/templates/${del.id}`, { method: 'DELETE' }); toast('Template deleted'); reload(); }} />}
     </Card>
   );
 }

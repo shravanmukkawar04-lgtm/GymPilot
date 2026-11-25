@@ -1,13 +1,13 @@
 /**
  * The automatic messages that go out at a moment: a payment is collected, a shop sale is made, a membership is
  * renewed or put on hold, a staff member or enquiry is added. Each one has its own switch in Settings (off until
- * the owner turns it on) and uses the template from the library.
+ * the owner turns it on) and uses the template chosen for it there, or the built-in one from the library.
  *
  * Nothing here can break the action that caused it. A failure is logged and the message is simply not sent.
  */
 import { one, q, tx } from '../db';
 import { getSettings } from './billing';
-import { contactVars, flushQueue, formatDate, formatMoney, queueOne, runAutomations } from './messaging';
+import { automationTemplate, contactVars, flushQueue, formatDate, formatMoney, queueOne, runAutomations } from './messaging';
 
 const METHOD_LABEL: Record<string, string> = { cash: 'Cash', upi: 'UPI', card: 'Card', bank: 'Bank transfer' };
 const methodText = (methods: string[]) => [...new Set(methods.map((m) => METHOD_LABEL[m] ?? m))].join(' + ') || '-';
@@ -17,11 +17,11 @@ type Who = { member_id?: number | null; lead_id?: number | null; name: string; p
 /** WhatsApp does not accept an empty blank, so anything missing is shown as a dash. */
 const dash = (vars: Record<string, unknown>) => Object.fromEntries(Object.entries(vars).map(([k, v]) => [k, v === null || v === undefined || v === '' ? '-' : v]));
 
-/** Puts one message in the queue if its switch is on. Returns its id, or null when nothing was queued. */
+/** Puts one message in the queue if its switch is on. `key` is the built-in template's key. Returns its id, or null when nothing was queued. */
 async function queueEvent(flag: string, key: string, who: Who, vars: Record<string, unknown>, dedupe: string) {
   const s = await getSettings();
   if (!s[flag] || !who.phone) return null;
-  const t = await one<any>('SELECT * FROM message_templates WHERE key=$1', [key]);
+  const t = await automationTemplate(s, key);
   if (!t) return null;
   if (who.member_id && (await one<{ o: boolean }>('SELECT whatsapp_opt_out o FROM members WHERE id=$1', [who.member_id]))?.o) return null;
   const r = await queueOne(undefined, {

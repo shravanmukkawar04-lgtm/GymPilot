@@ -19,17 +19,18 @@ const AUDIENCES = ['all', 'active', 'expiring', 'expired', 'dues', 'inactive', '
 route('GET', '/comms/overview', 'comms', async () => {
   // A savepoint, so a failure here cannot spoil the rest of the request.
   await tx(() => runAllAutomations()).catch((e) => console.error('[automations]', e));
-  const [queue, templates, counts, channels] = await Promise.all([
+  const [queue, templates, counts, channels, settings] = await Promise.all([
     q(`SELECT * FROM messages WHERE status IN ('queued','failed') ORDER BY id DESC LIMIT 200`),
     q(`SELECT * FROM message_templates ORDER BY id`),
     Promise.all(AUDIENCES.map(async (a) => [a, await countAudience(a)] as const)),
     channelStatus(),
+    one<any>('SELECT auto_template_ids FROM settings'),
   ]);
-  return { queue, templates, audiences: Object.fromEntries(counts), channels, auto_vars: AUTO_VARS };
+  return { queue, templates, audiences: Object.fromEntries(counts), channels, auto_vars: AUTO_VARS, auto_template_ids: settings?.auto_template_ids ?? {} };
 });
 
-/** The library templates (those with a key), for showing which one each automatic message uses. Unlike the overview, this starts nothing. */
-route('GET', '/comms/templates', 'comms', async () => q(`SELECT id, key, name, header, body, footer, wa_status, wa_template_name FROM message_templates WHERE key IS NOT NULL ORDER BY id`));
+/** Every template, for choosing which one each automatic message sends in Settings. Unlike the overview, this starts nothing. */
+route('GET', '/comms/templates', 'comms', async () => q(`SELECT id, key, name, header, body, footer, category, wa_category, wa_status, wa_template_name FROM message_templates ORDER BY name, id`));
 
 route('GET', '/comms/history', 'comms', async () => q(`SELECT * FROM messages WHERE status='sent' ORDER BY sent_at DESC LIMIT 200`));
 
@@ -93,7 +94,9 @@ route('PUT', '/comms/templates/:id', 'comms', async ({ params, body }) => {
   if (!old) throw notFound('Template not found');
   if (old.wa_template_id) {
     if (v.category !== old.category || v.language !== old.language) throw bad('Category and language cannot change after a template is sent to WhatsApp. Create a new template instead.');
-    const changed = v.body !== old.body || (v.header ?? null) !== old.header || (v.footer ?? null) !== old.footer;
+    // Renaming a blank ({{1}} to {{name}}) changes only this copy: WhatsApp sees the blanks by position, so the wording it approved is the same.
+    const shape = (x: string | null | undefined) => (x ?? '').replace(/\{\{\s*\w+\s*\}\}/g, '{{}}');
+    const changed = shape(v.body) !== shape(old.body) || shape(v.header) !== shape(old.header) || (v.footer ?? null) !== old.footer;
     if (changed) {
       validateForMeta(v);
       await editSubmittedTemplate(await requireWaba(), { ...old, ...v });
@@ -147,9 +150,10 @@ route('POST', '/comms/templates/:id/submit', 'comms', async ({ params }) => {
 route('DELETE', '/comms/templates/:id', 'comms', async ({ params }) => {
   const t = await one<any>('SELECT * FROM message_templates WHERE id=$1', [params.id]);
   if (!t) throw notFound('Template not found');
-  if (t.key) throw bad('Built-in templates are used by automatic reminders and cannot be deleted');
   if (t.wa_template_name) await deleteSubmittedTemplate(await requireWaba(), t.wa_template_name);
   await q('DELETE FROM message_templates WHERE id=$1', [params.id]);
+  // An automatic message that was set to send it goes back to its built-in template (if that still exists).
+  await q(`UPDATE settings SET auto_template_ids = COALESCE((SELECT jsonb_object_agg(k, v) FROM jsonb_each(auto_template_ids) e(k, v) WHERE v <> to_jsonb($1::int)), '{}')`, [t.id]);
 });
 
 /* ---------- WhatsApp Business connection ---------- */

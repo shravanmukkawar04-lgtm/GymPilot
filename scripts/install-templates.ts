@@ -1,7 +1,7 @@
 /**
  * Puts the WhatsApp template library (lib/services/template-library.ts) into every gym.
  *
- *   npm run db:templates                      add the library; nothing is deleted
+ *   npm run db:templates                      add the library; nothing is deleted. A built-in template deleted in the app is added back
  *   npm run db:templates -- --replace-all     delete every other template first (a backup is saved)
  *   npm run db:templates -- --keep-approved   delete the others, except ones already sent to WhatsApp (pending or approved)
  *

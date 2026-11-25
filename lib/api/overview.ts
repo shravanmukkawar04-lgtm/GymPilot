@@ -6,6 +6,7 @@ import * as s from './schemas';
 import { branchCookie, can, clearCookie, PERMISSIONS, sessionCookie } from './session';
 import { runAllAutomations } from '../services/notify';
 import { getSettings } from '../services/billing';
+import { AUTO_KEYS } from '../automation-templates';
 import { syncWhatsAppCostsIfStale } from '../services/wa-costs';
 import { photoResponse, PhotoKind, savePhoto } from '../services/photos';
 
@@ -212,6 +213,9 @@ const settingsSchema = z.object({
   inactive_days: z.coerce.number().int().min(1).max(365), auto_expiry: s.bool, auto_dues: s.bool, auto_birthday: s.bool, auto_welcome: s.bool, member_login_url: s.text,
   auto_receipt: s.bool, auto_renewal: s.bool, auto_pos_sale: s.bool, auto_pos_receipt: s.bool, auto_pos_due: s.bool,
   auto_freeze: s.bool, auto_employee: s.bool, auto_enquiry: s.bool, auto_followup: s.bool,
+  // The template chosen for each automatic message, by its built-in key. A blank choice means the built-in template.
+  auto_template_ids: z.record(z.string(), z.preprocess((x) => (x === '' || x === null || x === undefined ? null : Number(x)), z.number().int().positive().nullable())).optional()
+    .transform((m) => m && Object.fromEntries(Object.entries(m).filter(([k, id]) => AUTO_KEYS.includes(k) && id))),
 });
 
 // Every screen that bills needs the GST settings, so anyone logged in may read them. Only the owner changes them.

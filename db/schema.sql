@@ -592,6 +592,8 @@ ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_freeze boolean NOT NULL DEFAU
 ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_employee boolean NOT NULL DEFAULT false;
 ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_enquiry boolean NOT NULL DEFAULT false;
 ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_followup boolean NOT NULL DEFAULT false;
+-- The template the owner chose for each automatic message, as { "<built-in template key>": <template id> }. Empty means the built-in ones.
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_template_ids jsonb NOT NULL DEFAULT '{}';
 -- A supplier payment also shows in Expenses, so profit in Reports counts it.
 ALTER TABLE expenses ADD COLUMN IF NOT EXISTS supplier_payment_id int REFERENCES supplier_payments(id) ON DELETE CASCADE;
 CREATE UNIQUE INDEX IF NOT EXISTS expenses_supplier_payment ON expenses (supplier_payment_id);
