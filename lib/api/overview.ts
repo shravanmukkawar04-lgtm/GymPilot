@@ -98,7 +98,7 @@ route('GET', '/dashboard', 'dashboard', async ({ user }) => {
   await tx(() => runAllAutomations()).catch((e) => console.error('[automations]', e));
   await tx(() => syncWhatsAppCostsIfStale()).catch((e) => console.error('[whatsapp costs]', e));
 
-  const [kpis, chart, recent, setup, graphs] = await Promise.all([
+  const [kpis, chart, recent, setup, graphs, birthdays] = await Promise.all([
     one(`SELECT
       (SELECT count(*) FROM member_overview WHERE NOT archived AND status='active') active_members,
       (SELECT count(*) FROM attendance WHERE day=gym_today() AND member_id IS NOT NULL) checkins_today,
@@ -143,8 +143,17 @@ route('GET', '/dashboard', 'dashboard', async ({ user }) => {
       EXISTS(SELECT 1 FROM biometric_devices) device,
       EXISTS(SELECT 1 FROM leads) leads`),
     dashboardGraphs(),
+    // Current members whose birthday is today or in the next 7 days. A 29 Feb birthday falls on 28 Feb in other years.
+    q(`SELECT id, name, phone, photo_v, dob, plan_name, next_bday, (next_bday - gym_today())::int AS days_away, turning::int
+       FROM (SELECT o.*, CASE WHEN last_bday = gym_today() THEN last_bday ELSE (o.dob + (yrs + 1) * interval '1 year')::date END AS next_bday,
+               CASE WHEN last_bday = gym_today() THEN yrs ELSE yrs + 1 END AS turning
+             FROM member_overview o,
+               LATERAL (SELECT date_part('year', age(gym_today(), o.dob)) AS yrs) a,
+               LATERAL (SELECT (o.dob + a.yrs * interval '1 year')::date AS last_bday) l
+             WHERE NOT o.archived AND o.left_on IS NULL AND o.dob IS NOT NULL AND o.dob <= gym_today()) b
+       WHERE next_bday <= gym_today() + 7 ORDER BY next_bday, name LIMIT 20`),
   ]);
-  return { kind: 'owner', kpis, chart, recent, setup, graphs };
+  return { kind: 'owner', kpis, chart, recent, setup, graphs, birthdays };
 });
 
 /** Data for the three graphs on the dashboard. Limited to the branch on screen, like the rest of it. */

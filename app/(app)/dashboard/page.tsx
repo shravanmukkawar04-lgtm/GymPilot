@@ -1,8 +1,8 @@
 'use client';
 import Link from 'next/link';
-import { AlertTriangle, ArrowRight, BarChart3, Check, Circle, Fingerprint, MessageCircle, Package, PhoneCall, ReceiptText, RefreshCw, UserX } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BarChart3, Cake, Check, Circle, Fingerprint, MessageCircle, Package, PhoneCall, ReceiptText, RefreshCw, UserX } from 'lucide-react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Legend, Line, LineChart, Pie, PieChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { fmtDate, fmtTime, inr, useApi } from '@/lib/client';
+import { fmtDate, fmtTime, inr, photoUrl, useApi } from '@/lib/client';
 import { Avatar, Badge, Button, Card, Empty, ErrorNote, Loading, Stat, StatusBadge } from '@/components/ui';
 import { useUser } from '@/components/shell';
 
@@ -215,7 +215,8 @@ function OwnerDashboard({ d }: { d: any }) {
         <Card title="Joined and left" subtitle="Last 6 months"><GrowthGraph rows={d.graphs.growth} /></Card>
       </div>
 
-      <Card title="Latest check-ins" action={<Button size="sm" variant="ghost" href="/attendance">See all</Button>} pad={false}>
+      <div className="grid lg:grid-cols-3 gap-4">
+      <Card title="Latest check-ins" action={<Button size="sm" variant="ghost" href="/attendance">See all</Button>} pad={false} className="lg:col-span-2">
         {d.recent.length === 0
           ? <Empty icon={Fingerprint} title="No one has checked in yet today" text="Check-ins appear here as members scan their finger." />
           : <ul className="pb-1.5">
@@ -231,7 +232,35 @@ function OwnerDashboard({ d }: { d: any }) {
             ))}
           </ul>}
       </Card>
+      <Birthdays rows={d.birthdays} />
+      </div>
     </>
+  );
+}
+
+/** Members whose birthday is today or in the next 7 days. */
+function Birthdays({ rows }: { rows: any[] }) {
+  const today = rows.filter((r) => r.days_away === 0).length;
+  return (
+    <Card title="Birthdays" subtitle={today ? `${today} today · next 7 days` : 'Today and the next 7 days'} pad={false}>
+      {rows.length === 0
+        ? <Empty icon={Cake} title="No birthdays this week" text="Members with a date of birth on their profile appear here before their birthday." />
+        : <ul className="pb-1.5">
+          {rows.map((r) => (
+            <li key={r.id}>
+              <Link href={`/members/${r.id}`} className="flex items-center gap-3 px-4 py-2 hover:bg-canvas">
+                <Avatar name={r.name} size={32} src={photoUrl('member', r.id, r.photo_v)} />
+                <span className="flex-1 min-w-0">
+                  <span className="block truncate font-medium text-ink">{r.name}</span>
+                  <span className="block text-[13px] text-muted">Turns {r.turning} · {fmtDate(r.next_bday)}</span>
+                </span>
+                {r.days_away === 0 ? <Badge tone="green"><Cake className="size-3 mr-1" />Today</Badge>
+                  : <span className="text-muted text-[13px] tabular-nums">{r.days_away === 1 ? 'Tomorrow' : `in ${r.days_away} days`}</span>}
+              </Link>
+            </li>
+          ))}
+        </ul>}
+    </Card>
   );
 }
 
